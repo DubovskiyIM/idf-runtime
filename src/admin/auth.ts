@@ -12,7 +12,7 @@ export function createAdminAuth(secret: string) {
     if (Math.abs(now - ts) > MAX_SKEW_SECONDS) return res.status(401).json({ error: 'stale_ts' });
 
     const expected = createHmac('sha256', secret)
-      .update(`${req.method.toUpperCase()}\n${req.path}\n${body}\n${ts}`)
+      .update(`${req.method.toUpperCase()}\n${req.originalUrl}\n${body}\n${ts}`)
       .digest('hex');
     const a = Buffer.from(expected, 'hex');
     const b = Buffer.from(sig, 'hex');
