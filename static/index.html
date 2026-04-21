@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>idf-runtime</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 640px; margin: 4rem auto; padding: 2rem; color: #222; }
+    code { background: #f4f4f4; padding: 0.15em 0.35em; border-radius: 3px; }
+    h1 { margin-top: 0; }
+    .hint { color: #666; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>idf-runtime</h1>
+  <p>Data plane для IDF домена. SPA bundle — временный placeholder (M1.1); полный <code>V2Shell</code> доставляется в M1.2 после разблокировки Vite build.</p>
+  <p>Работающие endpoints:</p>
+  <ul>
+    <li><code>GET /health</code> — liveness</li>
+    <li><code>GET /admin/health</code> — HMAC-signed</li>
+    <li><code>POST /admin/reload</code> — signed ontology push</li>
+    <li><code>GET /admin/audit?since=&amp;entity=</code></li>
+    <li><code>GET /admin/rejected</code></li>
+    <li><code>POST /api/effects</code> — Bearer JWT + viewer middleware</li>
+    <li><code>GET /api/voice/:slug/:projection</code></li>
+    <li><code>GET /api/document/:slug/:projection</code></li>
+    <li><code>GET /api/agent/:slug/{schema,world}</code></li>
+  </ul>
+  <p class="hint">Repo: <a href="https://github.com/DubovskiyIM/idf-runtime">DubovskiyIM/idf-runtime</a></p>
+</body>
+</html>
