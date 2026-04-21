@@ -1,0 +1,11 @@
+node_modules/
+dist/
+static/assets/
+.env
+.env.local
+/data/*
+!/data/.gitkeep
+*.log
+coverage/
+.DS_Store
+.fly/
