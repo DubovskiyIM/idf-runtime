@@ -21,6 +21,7 @@ import { createVoiceRouter } from './routes/voice.js';
 import { createDocumentRouter } from './routes/document.js';
 import { createAgentRouter } from './routes/agent.js';
 import { createEffectsRouter } from './routes/effects.js';
+import { createTenantIndexRouter } from './routes/tenant-index.js';
 import { makeValidator } from './validator.js';
 
 const env = loadEnv();
@@ -59,6 +60,15 @@ app.use(
       req.rawBody = buf.toString('utf8');
     },
   })
+);
+// Tenant `/` — overview page с inline domain-JSON. Перехватывает root ДО
+// express.static чтобы обойти host idf bundle (он умеет только 14 pre-built
+// доменов, не рендерит arbitrary user-created ontology).
+app.use(
+  createTenantIndexRouter({
+    getDomain: () => currentDomain,
+    tenantSlug: env.TENANT_SLUG,
+  }),
 );
 app.use(express.static('static'));
 

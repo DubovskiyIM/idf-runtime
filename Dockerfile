@@ -21,6 +21,9 @@ RUN apk add --no-cache wget
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY static ./static
+# Tenant overview page (vanilla HTML/JS) — перекрывает host idf'овский
+# index.html на '/' route. См. src/routes/tenant-index.ts.
+COPY static-tenant-src/tenant-index.html ./static/tenant-index.html
 COPY package.json ./
 VOLUME ["/data"]
 EXPOSE 3001
