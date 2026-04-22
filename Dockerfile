@@ -4,26 +4,26 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 FROM base AS deps
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci --omit=dev
 
 FROM base AS builder
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci
-COPY tsconfig.json ./
+COPY tsconfig.json vite.config.ts ./
 COPY src ./src
-# tsc only, без scripts/build-frontend.mjs (требует host repo, делается локально перед docker build)
-RUN npx tsc
+COPY web ./web
+# Build server (tsc) + tenant frontend (vite). Static/index.html + assets/
+# создаются vite'ом — не нужен локальный pre-build (в отличие от старой
+# scripts/build-frontend.mjs которая rsync'ила host idf).
+RUN npx tsc && npx vite build
 
 FROM base AS runtime
 ENV NODE_ENV=production
 RUN apk add --no-cache wget
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-COPY static ./static
-# Tenant overview page (vanilla HTML/JS) — перекрывает host idf'овский
-# index.html на '/' route. См. src/routes/tenant-index.ts.
-COPY static-tenant-src/tenant-index.html ./static/tenant-index.html
+COPY --from=builder /app/static ./static
 COPY package.json ./
 VOLUME ["/data"]
 EXPOSE 3001
