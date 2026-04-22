@@ -29,17 +29,44 @@ type NestedDomain = {
   DOMAIN_NAME?: string;
 };
 
-function toNested(flat: FlatDomain): NestedDomain {
+type MaybeNested = FlatDomain & Partial<NestedDomain>;
+
+/**
+ * Detect-then-normalize: runtime /api/domain может отдать:
+ *  (a) flat shape  (legacy loader): { entities, intents, roles, projections, invariants, meta }
+ *  (b) nested shape (studio seedDomain пишет как есть): { INTENTS, PROJECTIONS, ONTOLOGY:{entities, roles, invariants}, meta }
+ *
+ * Выбираем по наличию uppercase ключей.
+ */
+function toNested(raw: MaybeNested): NestedDomain {
+  const isNested =
+    raw && typeof raw === 'object' &&
+    (raw.INTENTS !== undefined || raw.ONTOLOGY !== undefined);
+
+  if (isNested) {
+    return {
+      meta: { id: raw.meta?.id ?? 'tenant', description: raw.meta?.description },
+      INTENTS: raw.INTENTS ?? {},
+      PROJECTIONS: raw.PROJECTIONS ?? {},
+      ONTOLOGY: {
+        entities: raw.ONTOLOGY?.entities ?? {},
+        roles: raw.ONTOLOGY?.roles ?? {},
+        invariants: raw.ONTOLOGY?.invariants ?? [],
+      },
+      DOMAIN_NAME: raw.meta?.id,
+    };
+  }
+
   return {
-    meta: { id: flat.meta?.id ?? 'tenant', description: flat.meta?.description },
-    INTENTS: flat.intents ?? {},
-    PROJECTIONS: flat.projections ?? {},
+    meta: { id: raw.meta?.id ?? 'tenant', description: raw.meta?.description },
+    INTENTS: raw.intents ?? {},
+    PROJECTIONS: raw.projections ?? {},
     ONTOLOGY: {
-      entities: flat.entities ?? {},
-      roles: flat.roles ?? {},
-      invariants: flat.invariants ?? [],
+      entities: raw.entities ?? {},
+      roles: raw.roles ?? {},
+      invariants: raw.invariants ?? [],
     },
-    DOMAIN_NAME: flat.meta?.id,
+    DOMAIN_NAME: raw.meta?.id,
   };
 }
 
