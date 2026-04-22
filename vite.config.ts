@@ -5,6 +5,9 @@ import { resolve } from 'path';
 export default defineConfig({
   plugins: [react()],
   root: resolve(__dirname, 'web'),
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+  },
   build: {
     outDir: resolve(__dirname, 'static'),
     emptyOutDir: true,
