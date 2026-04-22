@@ -91,15 +91,52 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script_stop: true
-          # Демо-tenant в /opt/idf-runtime/demo/. Pull → restart → smoke.
-          # Tenant'ы PM'а (создаются orchestrator'ом из studio) обновлять
-          # отдельно — у них свой image tag, deploy.yml их не трогает.
+          envs: IMAGE_NAME
+          # Итерация по всем tenant-директориям в /opt/idf-runtime/.
+          # Legacy tenants с `image: idf-runtime:dev` (local tag) авто-migrate'ятся
+          # на GHCR-reference через sed. Studio orchestrator теперь тоже генерит
+          # compose с GHCR-ref — новые tenant'ы сразу правильные.
           script: |
             set -euo pipefail
-            cd /opt/idf-runtime/demo
-            docker compose pull runtime
-            docker compose up -d runtime
+            IMAGE_REF="ghcr.io/dubovskiyim/idf-runtime:latest"
+
+            updated=0
+            skipped=0
+            failed=0
+            for dir in /opt/idf-runtime/*/; do
+              [ -f "$dir/docker-compose.yml" ] || continue
+              slug=$(basename "$dir")
+
+              # Auto-migrate legacy `image: idf-runtime:dev` → GHCR ref.
+              if grep -q '^    image: idf-runtime:dev$' "$dir/docker-compose.yml"; then
+                echo "[$slug] migrate compose: idf-runtime:dev → $IMAGE_REF"
+                sed -i "s|^    image: idf-runtime:dev$|    image: $IMAGE_REF|" "$dir/docker-compose.yml"
+              fi
+
+              # Tenant может использовать кастомный image (не наш GHCR) — пропускаем.
+              if ! grep -q "$IMAGE_REF" "$dir/docker-compose.yml"; then
+                echo "[$slug] skip (custom image)"
+                skipped=$((skipped + 1))
+                continue
+              fi
+
+              echo "[$slug] pull + up -d"
+              if (cd "$dir" && docker compose pull runtime && docker compose up -d runtime); then
+                updated=$((updated + 1))
+              else
+                failed=$((failed + 1))
+                echo "[$slug] ERROR — продолжаем с остальными"
+              fi
+            done
+
             docker image prune -f
-            echo "smoke-check..."
+
+            echo "summary: updated=$updated skipped=$skipped failed=$failed"
+
+            # Smoke на demo-tenant — canonical health endpoint
+            echo "smoke-check demo..."
             sleep 3
-            curl -fsS http://127.0.0.1:3001/health || curl -fsS https://runtime.intent-design.tech/health
+            curl -fsS http://127.0.0.1:4001/health || curl -fsS https://demo.app.intent-design.tech/health
+
+            # Exit non-zero если были failures
+            [ "$failed" -eq 0 ]
