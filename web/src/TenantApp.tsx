@@ -51,6 +51,18 @@ type EffectRow = {
   context?: Record<string, unknown>;
 };
 
+/** Читаемое имя для derived projection'а без authored proj.name. */
+function humanizeId(id: string): string {
+  return id
+    .replace(/^my_/, 'мои ')
+    .replace(/_list$/, '')
+    .replace(/_feed$/, '')
+    .replace(/_detail$/, '')
+    .replace(/_create$/, ': создать')
+    .replace(/_edit$/, ': изменить')
+    .replace(/_/g, ' ');
+}
+
 function foldEffects(effects: EffectRow[]): Record<string, Record<string, Record<string, unknown>>> {
   const world: Record<string, Record<string, Record<string, unknown>>> = {};
   for (const e of effects) {
@@ -98,45 +110,60 @@ export function TenantApp() {
     refreshEffects();
   }, [refreshEffects]);
 
-  const { nested, projections, rootProjectionIds, world, domainId, description, isEmpty } = useMemo(() => {
-    if (!domain) {
-      return {
-        nested: null,
-        projections: {} as Record<string, any>,
-        rootProjectionIds: [] as string[],
-        world: {} as Record<string, Record<string, Record<string, unknown>>>,
-        domainId: 'tenant',
-        description: undefined as string | undefined,
-        isEmpty: true,
-      };
-    }
+  const {
+    nested,
+    mergedProjections,
+    artifacts,
+    rootProjectionIds,
+    world,
+    domainId,
+    description,
+    isEmpty,
+  } = useMemo(() => {
+    const emptyReturn = {
+      nested: null,
+      mergedProjections: {} as Record<string, any>,
+      artifacts: {} as Record<string, any>,
+      rootProjectionIds: [] as string[],
+      world: {} as Record<string, Record<string, Record<string, unknown>>>,
+      domainId: 'tenant',
+      description: undefined as string | undefined,
+      isEmpty: true,
+    };
+    if (!domain) return emptyReturn;
+
     const n = toNested(domain);
     const derived = (() => {
       try {
-        return deriveProjections(n.INTENTS, n.ONTOLOGY);
-      } catch {
+        return deriveProjections(n.INTENTS, n.ONTOLOGY) ?? {};
+      } catch (e) {
+        console.warn('deriveProjections failed:', e);
         return {};
       }
     })();
-    const merged = { ...(derived ?? {}), ...n.PROJECTIONS };
-    let crystallized: Record<string, any> = merged;
-    try {
-      const out = crystallizeV2(n.INTENTS, n.ONTOLOGY, merged);
-      if (out && typeof out === 'object') {
-        crystallized = out.projections ?? out ?? merged;
-      }
-    } catch (e) {
-      console.warn('crystallizeV2 failed, falling back to merged projections:', e);
+    // Authored PROJECTIONS перекрывают derived поверх.
+    const merged: Record<string, any> = { ...derived };
+    for (const [id, authored] of Object.entries(n.PROJECTIONS ?? {})) {
+      merged[id] = merged[id] ? { ...merged[id], ...(authored as any) } : authored;
     }
-    const rootIds = Object.keys(crystallized).filter((pid) => {
-      const p = (crystallized as Record<string, any>)[pid];
-      return !p?.absorbedBy;
-    });
+
+    // crystallizeV2 signature: (INTENTS, PROJECTIONS, ONTOLOGY, domainId, opts)
+    let artifactsMap: Record<string, any> = {};
+    try {
+      artifactsMap = crystallizeV2(n.INTENTS, merged, n.ONTOLOGY, n.meta.id) ?? {};
+    } catch (e) {
+      console.warn('crystallizeV2 failed:', e);
+    }
+
+    // Root projections = artifact'ы не absorbedBy другим (R8 hub-absorption).
+    const rootIds = Object.keys(artifactsMap).filter((pid) => !artifactsMap[pid]?.absorbedBy);
+
     const entitiesCount = Object.keys(n.ONTOLOGY.entities ?? {}).length;
     const intentsCount = Object.keys(n.INTENTS ?? {}).length;
     return {
       nested: n,
-      projections: crystallized,
+      mergedProjections: merged,
+      artifacts: artifactsMap,
       rootProjectionIds: rootIds,
       world: foldEffects(effects),
       domainId: n.meta.id,
@@ -206,7 +233,19 @@ export function TenantApp() {
     );
   }
 
-  const activeProjection = activeProjectionId ? (projections as Record<string, any>)[activeProjectionId] : null;
+  const activeArtifact = activeProjectionId ? artifacts[activeProjectionId] : null;
+  const activeProjection = activeProjectionId ? mergedProjections[activeProjectionId] : null;
+
+  const navigate = useCallback(
+    (projectionId: string, params?: Record<string, string>) => {
+      if (artifacts[projectionId]) {
+        setActiveProjectionId(projectionId);
+      }
+      return { projectionId, params: params ?? {} };
+    },
+    [artifacts],
+  );
+  const back = useCallback(() => undefined, []);
 
   return (
     <AntdAdapterProvider>
@@ -258,8 +297,10 @@ export function TenantApp() {
                   Разделы
                 </div>
                 {rootProjectionIds.map((pid) => {
-                  const p = (projections as Record<string, any>)[pid];
+                  const proj = mergedProjections[pid];
+                  const art = artifacts[pid];
                   const isActive = pid === activeProjectionId;
+                  const label = proj?.name ?? art?.title ?? humanizeId(pid);
                   return (
                     <button
                       key={pid}
@@ -279,21 +320,25 @@ export function TenantApp() {
                         fontFamily: 'Inter, system-ui, sans-serif',
                       }}
                     >
-                      {p?.title ?? pid}
+                      {label}
                     </button>
                   );
                 })}
               </nav>
-              <main style={{ flex: 1, overflow: 'auto', padding: 24 }}>
-                {activeProjection ? (
+              <main style={{ flex: 1, overflow: 'auto', padding: 24, background: '#fff' }}>
+                {activeArtifact ? (
                   <ProjectionRendererV2
+                    artifact={activeArtifact}
                     projection={activeProjection}
-                    projectionId={activeProjectionId!}
-                    ontology={nested.ONTOLOGY}
-                    intents={nested.INTENTS}
+                    artifacts={artifacts}
+                    allProjections={mergedProjections}
                     world={world}
                     viewer={viewer}
+                    viewerContext={{ userId: viewer.id, userName: viewer.name }}
                     exec={exec}
+                    routeParams={{}}
+                    navigate={navigate}
+                    back={back}
                   />
                 ) : (
                   <div style={{ color: '#6b7280' }}>Выберите раздел слева</div>
