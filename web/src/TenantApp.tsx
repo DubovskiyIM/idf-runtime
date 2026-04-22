@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 
 /**
- * Simple React tenant overview — structured view of deployed ontology.
+ * Tenant overview report — "first-view" layout:
+ * eyebrow + большой serif domain-id + description lede, 4-cell grid счётчиков,
+ * ниже секции с entity-карточками, intent-list, role-list, API-endpoints.
+ * Всё на один scroll, без tabs.
  *
- * Не использует SDK ProjectionRendererV2 + Mantine adapter (peer-dep конфликт
- * mantine@9 ↔ react@19 vs react@18 + ряд missing peer deps через npm
- * legacy-peer-deps). Полноценный V2Shell rendering — следующий milestone
- * после stabilization frontend dep-graph'а.
- *
- * Текущее поведение: fetch /api/domain → render entities/intents/roles в
- * editorial dark stele. Аналогично раннему vanilla tenant-index.html, но
- * React-интерактивный (tabs, refresh, ready для postMessage extensions).
+ * Матчит UX что PM видел сразу после нажатия «Опубликовать» в studio —
+ * structured report приложения. Полноценный interactive V2Shell — следующий
+ * milestone (требует stabilization peer-dep graph'а react/mantine/sdk).
  */
 
 type FlatDomain = {
@@ -46,19 +44,9 @@ type Role = {
   [k: string]: unknown;
 };
 
-type Tab = 'entities' | 'intents' | 'roles' | 'api';
-
-const TAB_LABELS: Record<Tab, string> = {
-  entities: 'Сущности',
-  intents: 'Действия',
-  roles: 'Роли',
-  api: 'API',
-};
-
 export function TenantApp() {
   const [domain, setDomain] = useState<FlatDomain | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('entities');
 
   useEffect(() => {
     fetch('/api/domain')
@@ -68,11 +56,12 @@ export function TenantApp() {
   }, []);
 
   const counts = useMemo(() => {
-    if (!domain) return { entities: 0, intents: 0, roles: 0, projections: 0 };
+    if (!domain) return { entities: 0, intents: 0, roles: 0, invariants: 0, projections: 0 };
     return {
       entities: Object.keys(domain.entities ?? {}).length,
       intents: Object.keys(domain.intents ?? {}).length,
       roles: Object.keys(domain.roles ?? {}).length,
+      invariants: (domain.invariants ?? []).length,
       projections: Object.keys(domain.projections ?? {}).length,
     };
   }, [domain]);
@@ -93,102 +82,16 @@ export function TenantApp() {
   }
 
   const domainId = domain.meta?.id ?? 'tenant';
-  const isEmpty = counts.entities === 0 && counts.intents === 0 && counts.roles === 0;
+  const description = domain.meta?.description;
+  const entities = domain.entities ?? {};
+  const intents = domain.intents ?? {};
+  const roles = domain.roles ?? {};
+  const projectionIds = Object.keys(domain.projections ?? {});
+  const entityNames = Object.keys(entities);
+  const intentIds = Object.keys(intents);
+  const roleIds = Object.keys(roles);
+  const isEmpty = entityNames.length === 0 && intentIds.length === 0 && roleIds.length === 0;
 
-  if (isEmpty) {
-    return (
-      <Shell domainId={domainId} description={domain.meta?.description}>
-        <div style={{ padding: '80px 48px', maxWidth: 720, margin: '0 auto', textAlign: 'center' }}>
-          <div style={{ color: 'var(--accent)', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 14 }}>
-            Приложение создаётся
-          </div>
-          <h2 style={{ fontFamily: 'Fraunces, serif', fontWeight: 500, fontSize: '1.5rem', marginBottom: 12 }}>
-            Онтология пока пустая
-          </h2>
-          <p style={{ color: 'var(--ink-dim)', fontSize: 14, lineHeight: 1.55 }}>
-            Владелец проекта ещё не опубликовал entities/intents. После нажатия «Опубликовать»
-            в IDF Studio — здесь появится структура приложения.
-          </p>
-        </div>
-      </Shell>
-    );
-  }
-
-  return (
-    <Shell domainId={domainId} description={domain.meta?.description}>
-      {/* Counter cards */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-          borderTop: '1px solid var(--rule)',
-          borderLeft: '1px solid var(--rule)',
-          marginTop: 24,
-        }}
-      >
-        <Card label="Сущности" value={counts.entities} />
-        <Card label="Действия" value={counts.intents} />
-        <Card label="Роли" value={counts.roles} />
-        <Card label="Проекции" value={counts.projections} />
-      </div>
-
-      {/* Tabs */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 2,
-          marginTop: 36,
-          marginBottom: 20,
-          borderBottom: '1px solid var(--rule)',
-          paddingBottom: 0,
-        }}
-      >
-        {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            style={{
-              padding: '8px 14px',
-              border: 'none',
-              borderBottom: `2px solid ${tab === t ? 'var(--accent)' : 'transparent'}`,
-              background: 'transparent',
-              color: tab === t ? 'var(--accent)' : 'var(--ink-dim)',
-              fontFamily: 'JetBrains Mono, monospace',
-              fontSize: 11,
-              letterSpacing: '0.1em',
-              textTransform: 'uppercase',
-              cursor: 'pointer',
-            }}
-          >
-            {TAB_LABELS[t]}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ minHeight: 300 }}>
-        {tab === 'entities' && <EntitiesView entities={domain.entities ?? {}} />}
-        {tab === 'intents' && <IntentsView intents={domain.intents ?? {}} />}
-        {tab === 'roles' && <RolesView roles={domain.roles ?? {}} />}
-        {tab === 'api' && (
-          <ApiView
-            domainId={domainId}
-            projectionIds={Object.keys(domain.projections ?? {})}
-          />
-        )}
-      </div>
-    </Shell>
-  );
-}
-
-function Shell({
-  domainId,
-  description,
-  children,
-}: {
-  domainId: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <header
@@ -196,8 +99,8 @@ function Shell({
           padding: '18px 48px',
           borderBottom: '1px solid var(--rule)',
           display: 'flex',
+          justifyContent: 'space-between',
           alignItems: 'baseline',
-          gap: 18,
           fontFamily: 'JetBrains Mono, monospace',
           fontSize: 11.5,
           letterSpacing: '0.04em',
@@ -206,29 +109,267 @@ function Shell({
         }}
       >
         <strong style={{ color: 'var(--ink)', letterSpacing: '0.08em' }}>IDF APP</strong>
-        <code style={{ color: 'var(--ink)' }}>{domainId}</code>
-        {description && (
-          <span style={{ color: 'var(--ink-dim)', fontFamily: 'Inter, sans-serif', fontSize: 13 }}>
-            {description}
-          </span>
-        )}
+        <span>{domainId}</span>
       </header>
-      <main
-        style={{
-          flex: 1,
-          maxWidth: 1100,
-          width: '100%',
-          margin: '0 auto',
-          padding: '48px 48px 120px',
-        }}
-      >
-        {children}
+
+      <main style={{ flex: 1, maxWidth: 1100, width: '100%', margin: '0 auto', padding: '56px 48px 120px' }}>
+        {isEmpty ? (
+          <div style={{ textAlign: 'center', marginTop: 60 }}>
+            <div style={{ color: 'var(--accent)', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: 14 }}>
+              Приложение создаётся
+            </div>
+            <h1 style={{ fontFamily: 'Fraunces, serif', fontWeight: 500, fontSize: '2rem', marginBottom: 12 }}>
+              Домен пока пустой
+            </h1>
+            <p style={{ color: 'var(--ink-dim)', fontSize: 15, lineHeight: 1.55, maxWidth: 620, margin: '0 auto' }}>
+              Владелец проекта ещё не опубликовал онтологию. После нажатия «Опубликовать»
+              в IDF Studio — здесь появится структура приложения.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div
+              style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: 11,
+                letterSpacing: '0.18em',
+                textTransform: 'uppercase',
+                color: 'var(--accent)',
+                marginBottom: 14,
+              }}
+            >
+              Приложение готово
+            </div>
+            <h1
+              style={{
+                fontFamily: 'Fraunces, serif',
+                fontWeight: 500,
+                fontSize: 'clamp(2.2rem, 5vw, 3.5rem)',
+                lineHeight: 1.02,
+                letterSpacing: '-0.02em',
+                marginBottom: description ? 18 : 36,
+                wordBreak: 'break-all',
+              }}
+            >
+              {domainId}
+            </h1>
+            {description && (
+              <p style={{ color: 'var(--ink-dim)', fontSize: 15, lineHeight: 1.55, marginBottom: 36, maxWidth: 720 }}>
+                {description}
+              </p>
+            )}
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                borderTop: '1px solid var(--rule)',
+                borderLeft: '1px solid var(--rule)',
+                marginBottom: 48,
+              }}
+            >
+              <CounterCard label="Сущности" value={counts.entities} preview={entityNames.slice(0, 6)} />
+              <CounterCard label="Действия" value={counts.intents} preview={intentIds.slice(0, 6)} />
+              <CounterCard label="Роли" value={counts.roles} preview={roleIds.slice(0, 6)} />
+              <CounterCard
+                label="Инварианты"
+                value={counts.invariants}
+                preview={counts.projections > 0 ? [`${counts.projections} проекций`] : []}
+                previewColor={counts.projections > 0 ? 'var(--ink-mid)' : undefined}
+              />
+            </div>
+
+            {entityNames.length > 0 && (
+              <Section label="Схема" title="Сущности">
+                {entityNames.map((name) => {
+                  const fields = Object.entries(entities[name]?.fields ?? {});
+                  return (
+                    <div
+                      key={name}
+                      style={{
+                        marginBottom: 12,
+                        padding: 16,
+                        background: 'var(--paper-dim)',
+                        border: '1px solid var(--rule)',
+                        borderRadius: 6,
+                      }}
+                    >
+                      <div style={{ fontFamily: 'Fraunces, serif', fontWeight: 600, fontSize: 16, color: 'var(--ink)', marginBottom: 4 }}>
+                        {name}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: 'JetBrains Mono, monospace',
+                          fontSize: 10.5,
+                          color: 'var(--ink-mid)',
+                          letterSpacing: '0.06em',
+                          marginBottom: 10,
+                        }}
+                      >
+                        {fields.length} ПОЛЕЙ
+                      </div>
+                      <ul
+                        style={{
+                          listStyle: 'none',
+                          padding: 0,
+                          margin: 0,
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                          gap: '4px 16px',
+                        }}
+                      >
+                        {fields.map(([fn, fv]) => (
+                          <li
+                            key={fn}
+                            style={{
+                              padding: '2px 0',
+                              fontFamily: 'JetBrains Mono, monospace',
+                              fontSize: 12,
+                              color: 'var(--ink-dim)',
+                            }}
+                          >
+                            <span style={{ color: 'var(--ink)' }}>{fn}</span>
+                            <span>: </span>
+                            <span style={{ color: 'var(--accent)' }}>
+                              {typeof fv === 'object' && fv && fv.type ? fv.type : JSON.stringify(fv)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </Section>
+            )}
+
+            {intentIds.length > 0 && (
+              <Section label="Операции" title="Действия">
+                {intentIds.map((id) => {
+                  const i = intents[id];
+                  return (
+                    <div
+                      key={id}
+                      style={{
+                        padding: '8px 12px',
+                        background: 'var(--paper-dim)',
+                        border: '1px solid var(--rule)',
+                        borderRadius: 4,
+                        marginBottom: 6,
+                        fontFamily: 'JetBrains Mono, monospace',
+                        fontSize: 12.5,
+                      }}
+                    >
+                      <span style={{ color: 'var(--ink)' }}>{id}</span>
+                      <span style={{ color: 'var(--ink-mid)' }}> · α=</span>
+                      <span style={{ color: 'var(--accent)' }}>{i.α ?? i.alpha ?? '?'}</span>
+                      {i.target && (
+                        <>
+                          <span style={{ color: 'var(--ink-mid)' }}> → </span>
+                          <span style={{ color: 'var(--ink)' }}>{i.target}</span>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </Section>
+            )}
+
+            {roleIds.length > 0 && (
+              <Section label="Доступ" title="Роли">
+                {roleIds.map((r) => {
+                  const role = roles[r];
+                  return (
+                    <div
+                      key={r}
+                      style={{
+                        padding: '8px 12px',
+                        background: 'var(--paper-dim)',
+                        border: '1px solid var(--rule)',
+                        borderRadius: 4,
+                        marginBottom: 6,
+                        fontSize: 13,
+                      }}
+                    >
+                      <span style={{ fontFamily: 'Fraunces, serif', fontWeight: 600 }}>{r}</span>
+                      <span style={{ color: 'var(--ink-mid)', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}> · base=</span>
+                      <span style={{ color: 'var(--accent)', fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                        {role.base ?? '?'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </Section>
+            )}
+
+            <Section label="API" title="Интеграции">
+              <ApiItem method="GET" path="/health" description="Проверка работоспособности" />
+              <ApiItem method="GET" path="/api/domain" description="Текущая ontology (public)" />
+              <ApiItem
+                method="POST"
+                path={`/api/agent/${domainId}/exec`}
+                description="Агентский exec (JWT + agent-роль)"
+              />
+              {projectionIds.slice(0, 5).map((pid) => (
+                <div key={pid}>
+                  <ApiItem
+                    method="GET"
+                    path={`/api/document/${pid}?format=html|json`}
+                    description={`Document-материализация «${pid}»`}
+                  />
+                  <ApiItem
+                    method="GET"
+                    path={`/api/voice/${pid}?format=plain|ssml`}
+                    description={`Voice-скрипт «${pid}»`}
+                  />
+                </div>
+              ))}
+            </Section>
+
+            <div
+              style={{
+                marginTop: 64,
+                padding: '18px 22px',
+                background: 'var(--accent-bg)',
+                border: '1px solid var(--accent)',
+                borderRadius: 6,
+                fontSize: 13,
+                color: 'var(--ink)',
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: 10.5,
+                  letterSpacing: '0.16em',
+                  textTransform: 'uppercase',
+                  color: 'var(--accent)',
+                  marginBottom: 8,
+                }}
+              >
+                ⓵ Раннее превью
+              </div>
+              Это структурный отчёт опубликованного приложения. Полный UI с формами
+              и списками будет доступен после стабилизации SDK-рендера (следующий
+              milestone) — прочитает ту же ontology и отдаст CRUD автоматически.
+            </div>
+          </>
+        )}
       </main>
     </div>
   );
 }
 
-function Card({ label, value }: { label: string; value: number }) {
+function CounterCard({
+  label,
+  value,
+  preview,
+  previewColor,
+}: {
+  label: string;
+  value: number;
+  preview?: string[];
+  previewColor?: string;
+}) {
   return (
     <div
       style={{
@@ -256,222 +397,110 @@ function Card({ label, value }: { label: string; value: number }) {
           fontSize: '2rem',
           color: value > 0 ? 'var(--ink)' : 'var(--ink-mid)',
           lineHeight: 1,
+          marginBottom: 8,
         }}
       >
         {value}
       </div>
-    </div>
-  );
-}
-
-function EntitiesView({ entities }: { entities: Record<string, Entity> }) {
-  const items = Object.entries(entities);
-  if (items.length === 0) return <EmptyHint label="Сущностей пока нет" />;
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14 }}>
-      {items.map(([name, entity]) => {
-        const fields = Object.entries(entity.fields ?? {});
-        return (
-          <div
-            key={name}
-            style={{
-              padding: '16px 18px',
-              background: 'var(--paper-dim)',
-              border: '1px solid var(--rule)',
-              borderRadius: 6,
-            }}
-          >
-            <div
-              style={{
-                fontFamily: 'Fraunces, serif',
-                fontWeight: 600,
-                fontSize: 17,
-                color: 'var(--ink)',
-                marginBottom: 4,
-              }}
-            >
-              {name}
-            </div>
-            <div
+      {preview && preview.length > 0 && (
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+          {preview.map((p) => (
+            <li
+              key={p}
               style={{
                 fontFamily: 'JetBrains Mono, monospace',
-                fontSize: 10.5,
-                color: 'var(--ink-mid)',
-                letterSpacing: '0.06em',
-                marginBottom: 12,
+                fontSize: 12,
+                padding: '2px 0',
+                color: previewColor ?? 'var(--ink-dim)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
               }}
             >
-              {fields.length} ПОЛЕЙ
-            </div>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {fields.map(([fieldName, spec]) => (
-                <li
-                  key={fieldName}
-                  style={{
-                    padding: '3px 0',
-                    fontFamily: 'JetBrains Mono, monospace',
-                    fontSize: 12,
-                    color: 'var(--ink-dim)',
-                  }}
-                >
-                  <span style={{ color: 'var(--ink)' }}>{fieldName}</span>
-                  <span>: </span>
-                  <span style={{ color: 'var(--accent)' }}>
-                    {typeof spec === 'object' && spec && spec.type ? spec.type : JSON.stringify(spec)}
-                  </span>
-                  {spec?.required && (
-                    <span style={{ color: 'var(--ok, #6fbf7f)', marginLeft: 6, fontSize: 10 }}>req</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        );
-      })}
+              {p}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-function IntentsView({ intents }: { intents: Record<string, Intent> }) {
-  const items = Object.entries(intents);
-  if (items.length === 0) return <EmptyHint label="Действий пока нет" />;
+function Section({
+  label,
+  title,
+  children,
+}: {
+  label: string;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {items.map(([id, intent]) => (
-        <div
-          key={id}
-          style={{
-            padding: '10px 14px',
-            background: 'var(--paper-dim)',
-            border: '1px solid var(--rule)',
-            borderRadius: 4,
-            fontFamily: 'JetBrains Mono, monospace',
-            fontSize: 13,
-          }}
-        >
-          <span style={{ color: 'var(--ink)' }}>{id}</span>
-          <span style={{ color: 'var(--ink-mid)' }}> · α=</span>
-          <span style={{ color: 'var(--accent)' }}>{intent.α ?? intent.alpha ?? '?'}</span>
-          {intent.target && (
-            <>
-              <span style={{ color: 'var(--ink-mid)' }}> → </span>
-              <span style={{ color: 'var(--ink)' }}>{intent.target}</span>
-            </>
-          )}
-        </div>
-      ))}
-    </div>
+    <section style={{ marginBottom: 48 }}>
+      <div
+        style={{
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: 11,
+          letterSpacing: '0.18em',
+          textTransform: 'uppercase',
+          color: 'var(--ink-mid)',
+          marginBottom: 8,
+        }}
+      >
+        {label}
+      </div>
+      <h2
+        style={{
+          fontFamily: 'Fraunces, serif',
+          fontWeight: 500,
+          fontSize: '1.5rem',
+          marginBottom: 16,
+        }}
+      >
+        {title}
+      </h2>
+      {children}
+    </section>
   );
 }
 
-function RolesView({ roles }: { roles: Record<string, Role> }) {
-  const items = Object.entries(roles);
-  if (items.length === 0) return <EmptyHint label="Ролей пока нет" />;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {items.map(([name, role]) => {
-        const can = role.canExecute ?? [];
-        return (
-          <div
-            key={name}
-            style={{
-              padding: '14px 18px',
-              background: 'var(--paper-dim)',
-              border: '1px solid var(--rule)',
-              borderRadius: 4,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
-              <span style={{ fontFamily: 'Fraunces, serif', fontWeight: 600, fontSize: 15 }}>
-                {name}
-              </span>
-              <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--ink-mid)', fontSize: 11 }}>
-                base=
-              </span>
-              <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--accent)', fontSize: 12 }}>
-                {role.base ?? '?'}
-              </span>
-            </div>
-            {can.length > 0 && (
-              <div style={{ fontSize: 12, color: 'var(--ink-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
-                Может: {can.join(', ')}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ApiView({ domainId, projectionIds }: { domainId: string; projectionIds: string[] }) {
-  const endpoints: Array<{ method: string; path: string; description: string }> = [
-    { method: 'GET', path: '/health', description: 'Проверка работоспособности tenant runtime' },
-    { method: 'GET', path: '/api/domain', description: 'Текущая ontology (public, без user-данных)' },
-    {
-      method: 'POST',
-      path: `/api/agent/${domainId}/exec`,
-      description: 'Агентский exec (JWT + agent-роль)',
-    },
-    {
-      method: 'POST',
-      path: `/api/agent/${domainId}/preapproval`,
-      description: 'Preapproval лимиты для agent-роли',
-    },
-  ];
-  for (const pid of projectionIds.slice(0, 6)) {
-    endpoints.push({
-      method: 'GET',
-      path: `/api/document/${pid}?format=html|json`,
-      description: `Document-материализация «${pid}»`,
-    });
-    endpoints.push({
-      method: 'GET',
-      path: `/api/voice/${pid}?format=plain|ssml`,
-      description: `Voice-скрипт «${pid}»`,
-    });
-  }
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {endpoints.map((e) => (
-        <div
-          key={e.method + e.path}
-          style={{
-            padding: '10px 14px',
-            background: 'var(--paper-dim)',
-            border: '1px solid var(--rule)',
-            borderRadius: 4,
-            display: 'flex',
-            gap: 12,
-            alignItems: 'center',
-            fontFamily: 'JetBrains Mono, monospace',
-            fontSize: 12,
-          }}
-        >
-          <span style={{ color: 'var(--accent)', fontWeight: 600, minWidth: 40 }}>{e.method}</span>
-          <span style={{ color: 'var(--ink)' }}>{e.path}</span>
-          <span style={{ color: 'var(--ink-dim)', fontFamily: 'Inter, sans-serif', fontSize: 12, marginLeft: 'auto' }}>
-            {e.description}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function EmptyHint({ label }: { label: string }) {
+function ApiItem({
+  method,
+  path,
+  description,
+}: {
+  method: string;
+  path: string;
+  description: string;
+}) {
   return (
     <div
       style={{
-        color: 'var(--ink-mid)',
-        textAlign: 'center',
-        marginTop: 60,
-        fontFamily: 'Fraunces, serif',
-        fontStyle: 'italic',
-        fontSize: 15,
+        padding: '10px 14px',
+        background: 'var(--paper-dim)',
+        border: '1px solid var(--rule)',
+        borderRadius: 4,
+        marginBottom: 6,
+        fontFamily: 'JetBrains Mono, monospace',
+        fontSize: 12,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        flexWrap: 'wrap',
       }}
     >
-      {label}
+      <span style={{ color: 'var(--accent)', fontWeight: 600, minWidth: 40 }}>{method}</span>
+      <span style={{ color: 'var(--ink)' }}>{path}</span>
+      <span
+        style={{
+          color: 'var(--ink-dim)',
+          fontFamily: 'Inter, sans-serif',
+          fontSize: 12,
+          marginLeft: 'auto',
+        }}
+      >
+        {description}
+      </span>
     </div>
   );
 }
