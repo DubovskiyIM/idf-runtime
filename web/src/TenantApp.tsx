@@ -204,6 +204,20 @@ export function TenantApp() {
     [refreshEffects],
   );
 
+  // Rules of Hooks: все useCallback до early-return веток. Иначе React error #310
+  // (rendered more hooks than during previous render) когда domain переходит
+  // из null в загруженное состояние.
+  const navigate = useCallback(
+    (projectionId: string, params?: Record<string, string>) => {
+      if (artifacts[projectionId]) {
+        setActiveProjectionId(projectionId);
+      }
+      return { projectionId, params: params ?? {} };
+    },
+    [artifacts],
+  );
+  const back = useCallback(() => undefined, []);
+
   if (error) {
     return (
       <div
@@ -235,17 +249,6 @@ export function TenantApp() {
 
   const activeArtifact = activeProjectionId ? artifacts[activeProjectionId] : null;
   const activeProjection = activeProjectionId ? mergedProjections[activeProjectionId] : null;
-
-  const navigate = useCallback(
-    (projectionId: string, params?: Record<string, string>) => {
-      if (artifacts[projectionId]) {
-        setActiveProjectionId(projectionId);
-      }
-      return { projectionId, params: params ?? {} };
-    },
-    [artifacts],
-  );
-  const back = useCallback(() => undefined, []);
 
   return (
     <AntdAdapterProvider>
