@@ -4,11 +4,11 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 FROM base AS deps
-COPY package.json package-lock.json .npmrc ./
+COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 FROM base AS builder
-COPY package.json package-lock.json .npmrc ./
+COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json vite.config.ts ./
 COPY src ./src
