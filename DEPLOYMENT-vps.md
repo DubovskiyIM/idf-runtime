@@ -2,6 +2,25 @@
 
 **Target:** 132.243.17.177 (Ubuntu 24.04 LTS), один контейнер = один домен. Nginx reverse-proxy + certbot управляется снаружи (как `auth.intent-design.tech`), новый tenant добавляется в `docker-compose.yml` в `/opt/idf-runtime/<slug>/`.
 
+## Continuous Deploy (демо-tenant)
+
+Push в `main` → CI passes → `.github/workflows/deploy.yml`:
+
+1. Clone host repo `DubovskiyIM/idf` (public) + `npm run build` → копирование `dist/` в `static/` (заменяет локальный `scripts/build-frontend.mjs`)
+2. Build `linux/amd64` image, push в `ghcr.io/dubovskiyim/idf-runtime:latest` (+ tag по sha)
+3. SSH в VPS → `cd /opt/idf-runtime/demo && docker compose pull runtime && up -d` + smoke `/health`
+
+CD обновляет **только демо-tenant** в `/opt/idf-runtime/demo/`. Tenant'ы PM'а (создаются orchestrator'ом из studio) обновляются отдельно — у них свой image tag и lifecycle.
+
+**Manual override:** Actions tab → Deploy → Run workflow.
+
+**One-time setup для CD:**
+
+1. **SSH deploy-key** — тот же что для idf-studio (один ключ на VPS).
+2. **GitHub Secrets** в idf-runtime: `VPS_HOST=132.243.17.177`, `VPS_USER=root`, `VPS_SSH_KEY=<private key>`.
+3. **GHCR public**: https://github.com/users/DubovskiyIM/packages/container/idf-runtime/settings → Public.
+4. **Compose демо-tenant** `/opt/idf-runtime/demo/docker-compose.yml`: `image: ghcr.io/dubovskiyim/idf-runtime:latest`.
+
 ## Pre-requisites
 
 - `/opt/idf-auth/` уже развёрнут (identity plane) — `auth.intent-design.tech`
