@@ -1,0 +1,100 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    name: Build, push & deploy
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+
+    steps:
+      - name: Checkout runtime
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # Frontend tenant'а собирается из public host repo (DubovskiyIM/idf).
+      # Локально build-frontend.mjs делает rsync из ~/WebstormProjects/idf,
+      # в CI заменяем на git clone — тот же result, но воспроизводимо.
+      - name: Checkout idf host (public)
+        uses: actions/checkout@v4
+        with:
+          repository: DubovskiyIM/idf
+          path: .host-idf
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build host frontend
+        run: |
+          cd .host-idf
+          npm ci --prefer-offline --no-audit
+          npm run build
+          cd ..
+          rm -rf static
+          mkdir -p static
+          cp -R .host-idf/dist/. static/
+          ls -la static/ | head
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.event.workflow_run.head_sha || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          # Демо-tenant в /opt/idf-runtime/demo/. Pull → restart → smoke.
+          # Tenant'ы PM'а (создаются orchestrator'ом из studio) обновлять
+          # отдельно — у них свой image tag, deploy.yml их не трогает.
+          script: |
+            set -euo pipefail
+            cd /opt/idf-runtime/demo
+            docker compose pull runtime
+            docker compose up -d runtime
+            docker image prune -f
+            echo "smoke-check..."
+            sleep 3
+            curl -fsS http://127.0.0.1:3001/health || curl -fsS https://runtime.intent-design.tech/health
