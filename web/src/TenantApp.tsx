@@ -179,20 +179,26 @@ export function TenantApp() {
     return { id: activeProjectionId, ...p };
   }, [activeProjectionId, allProjections]);
 
-  const artifact = useMemo(() => {
-    if (!nested || !activeProjection) return null;
+  // crystallizeV2 принимает все projections разом и возвращает map {id→artifact}.
+  // Signature: (INTENTS, PROJECTIONS, ONTOLOGY, domainId, opts).
+  const artifacts = useMemo(() => {
+    if (!nested) return {} as Record<string, unknown>;
     try {
-      return crystallizeV2(
+      const result = crystallizeV2(
         nested.INTENTS,
+        allProjections,
         nested.ONTOLOGY,
-        activeProjection,
-        { viewer, allProjections },
+        nested.meta.id,
+        {},
       );
+      return (result ?? {}) as Record<string, unknown>;
     } catch (e) {
       console.warn('crystallize failed:', e);
-      return null;
+      return {} as Record<string, unknown>;
     }
-  }, [nested, activeProjection, viewer, allProjections]);
+  }, [nested, allProjections]);
+
+  const artifact = activeProjectionId ? artifacts[activeProjectionId] : null;
 
   if (error) {
     return (
