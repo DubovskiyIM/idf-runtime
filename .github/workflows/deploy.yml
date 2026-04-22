@@ -86,19 +86,37 @@ jobs:
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          # commit SHA по которому buildx pushed свежую image — используем
+          # для pull, т.к. GHCR `:latest` тэг не обновляется через
+          # buildx + cache-from:gha (layers deduped → manifest :latest
+          # остаётся на старом digest). SHA-tag всегда свежий.
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script_stop: true
-          envs: IMAGE_NAME
+          envs: COMMIT_SHA
           # Итерация по всем tenant-директориям в /opt/idf-runtime/.
           # Legacy tenants с `image: idf-runtime:dev` (local tag) авто-migrate'ятся
           # на GHCR-reference через sed. Studio orchestrator теперь тоже генерит
           # compose с GHCR-ref — новые tenant'ы сразу правильные.
           script: |
             set -euo pipefail
+            IMAGE_BY_SHA="ghcr.io/dubovskiyim/idf-runtime:${COMMIT_SHA}"
             IMAGE_REF="ghcr.io/dubovskiyim/idf-runtime:latest"
+
+            # Фикс для сломанного GHCR `:latest` через buildx-cache:
+            # pull by SHA (свежий по определению) → retag локально как :latest
+            # и idf-runtime:dev. Studio orchestrator продолжает ссылаться на
+            # `idf-runtime:dev` в tenant compose'ах → retag делает эти tenant'ы
+            # актуальными без правки спец compose на VPS.
+            echo "[deploy] pulling $IMAGE_BY_SHA"
+            docker pull "$IMAGE_BY_SHA"
+            docker tag "$IMAGE_BY_SHA" "$IMAGE_REF"
+            docker tag "$IMAGE_BY_SHA" idf-runtime:dev
+            echo "[deploy] retagged :latest и idf-runtime:dev → $COMMIT_SHA"
 
             updated=0
             skipped=0
@@ -120,8 +138,12 @@ jobs:
                 continue
               fi
 
-              echo "[$slug] pull + up -d"
-              if (cd "$dir" && docker compose pull runtime && docker compose up -d runtime); then
+              echo "[$slug] up -d --force-recreate"
+              # Не pull'им — локальный retag уже указывает на свежую image.
+              # --force-recreate гарантирует что контейнер пересоздаётся даже
+              # если image digest тот же (compose умнее: с новой image auto,
+              # но на retag уже-загруженной image пропустит, нам нужен force).
+              if (cd "$dir" && docker compose up -d --force-recreate runtime); then
                 updated=$((updated + 1))
               else
                 failed=$((failed + 1))
