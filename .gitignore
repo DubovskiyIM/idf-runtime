@@ -9,3 +9,4 @@ static/assets/
 coverage/
 .DS_Store
 .fly/
+.worktrees/
