@@ -19,10 +19,26 @@ export type ValidationResult =
  */
 const TENANT_OWNER_ROLE = 'owner';
 
+/**
+ * Domain может прийти в двух формах:
+ * - flat: { entities, intents, roles, projections } — что orchestrator шлёт
+ *   через /admin/reload (после flatten'а nested спеки)
+ * - nested: { ONTOLOGY: { entities, roles, invariants }, INTENTS, PROJECTIONS }
+ *   — что было до orchestrator-flatten'а и что studio держит на стороне проекта
+ *
+ * Runtime'ы, созданные до flatten-логики, на диске содержат nested-форму.
+ * Чтобы validator не падал `unknown_role` для владельцев таких tenant'ов,
+ * читаем roles из обоих мест. Entity/intent access по тому же pattern'у.
+ */
+function resolveRoles(domain: any): Record<string, any> | undefined {
+  return domain?.roles ?? domain?.ONTOLOGY?.roles ?? undefined;
+}
+
 export function makeValidator() {
   return function validate(effect: any, domain: any, viewer: any): ValidationResult {
     // 1. role существует — с bypass'ом для tenant-owner'а
-    const role = domain?.roles?.[viewer.role];
+    const roles = resolveRoles(domain);
+    const role = roles?.[viewer.role];
     if (!role) {
       if (viewer.role === TENANT_OWNER_ROLE) return { ok: true };
       return { ok: false, reason: 'unknown_role' };
