@@ -193,6 +193,111 @@ const REASON_LABELS: Record<string, string> = {
   no_viewer: 'Нет авторизации',
 };
 
+/**
+ * Augment catalog artifacts: inject per-row intents в slots.body.item.intents.
+ *
+ * SDK на 0.59 промотировал только `catalog-default-datagrid` и
+ * `catalog-creator-toolbar` в stable — row-contextual-actions-menu остаётся
+ * в `candidate` (matching-only, без structure.apply). Поэтому catalog-artifact
+ * выходит из crystallize без delete/phase-transition кнопок.
+ *
+ * Detect'им intents подходящие per-row:
+ *   - α:"remove" target=mainEntity (Delete)
+ *   - α:"replace" target="mainEntity.<field>" (phase transitions типа pay_order)
+ *   - intent принимает ровно один id-параметр, совпадающий с mainEntity
+ *     (orderId для Order, genreId для Genre — не multi-entity)
+ *
+ * Shop-пример: `delete_genre` (α:remove target:Genre, params:[genreId])
+ * → добавляется в Genre catalog как 🗑 Delete per-row.
+ */
+function augmentCatalogRowIntents(
+  artifacts: Record<string, any>,
+  INTENTS: Record<string, any>,
+): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [pid, art] of Object.entries(artifacts)) {
+    if (art?.archetype !== 'catalog' || !art.mainEntity) {
+      out[pid] = art;
+      continue;
+    }
+    const mainEntity: string = art.mainEntity;
+    const entityLower = mainEntity[0].toLowerCase() + mainEntity.slice(1);
+    const ownIdParam = `${entityLower}Id`;
+
+    const perRow: Array<{ intentId: string; label: string; icon: string; danger: boolean; conditions: unknown[] }> = [];
+    for (const [iid, intent] of Object.entries(INTENTS)) {
+      const α = (intent?.α ?? intent?.alpha) as string | undefined;
+      const target = (intent?.target ?? '') as string;
+
+      const isRemoveThis = α === 'remove' && target === mainEntity;
+      const isReplaceThisField = α === 'replace' && target.startsWith(mainEntity + '.');
+      if (!isRemoveThis && !isReplaceThisField) continue;
+
+      const params = (intent?.parameters ?? []) as Array<{ name?: string; entity?: string; ref?: string }>;
+      const hasOwnId = params.some(
+        (p) => p?.name === ownIdParam || p?.name === 'id' || p?.name === 'entityId',
+      );
+      if (!hasOwnId) continue;
+
+      // intent с несколькими entity-параметрами → требует доп-контекст,
+      // не чистый per-row action (пропускаем).
+      const otherEntityParams = params.filter(
+        (p) =>
+          p?.name &&
+          p.name !== ownIdParam &&
+          p.name !== 'id' &&
+          typeof p.name === 'string' &&
+          p.name.endsWith('Id'),
+      );
+      if (otherEntityParams.length > 0) continue;
+
+      perRow.push({
+        intentId: iid,
+        label: (intent?.name as string | undefined) ?? iid,
+        icon: isRemoveThis ? '🗑' : '⚡',
+        danger: isRemoveThis,
+        conditions: [],
+      });
+    }
+
+    if (perRow.length === 0) {
+      out[pid] = art;
+      continue;
+    }
+
+    const existing = (art.slots?.body?.item?.intents ?? []) as Array<{ intentId?: string }>;
+    const existingIds = new Set(existing.map((i) => i?.intentId).filter(Boolean) as string[]);
+    // Выкидываем read-intent'ы которые SDK зачем-то попадают в item.intents —
+    // они не имеют смысла per-row (уже открыты на уровне catalog'а).
+    const filteredExisting = existing.filter((i) => {
+      const existingIntent = INTENTS[i?.intentId ?? ''];
+      const α = existingIntent?.α ?? existingIntent?.alpha;
+      return α && α !== 'read';
+    });
+    const fresh = perRow.filter((p) => !existingIds.has(p.intentId));
+    const merged = [...filteredExisting, ...fresh];
+    if (merged.length === filteredExisting.length) {
+      out[pid] = art;
+      continue;
+    }
+
+    out[pid] = {
+      ...art,
+      slots: {
+        ...art.slots,
+        body: {
+          ...art.slots.body,
+          item: {
+            ...(art.slots?.body?.item ?? {}),
+            intents: merged,
+          },
+        },
+      },
+    };
+  }
+  return out;
+}
+
 function humanizeReason(reason: string | undefined): string {
   if (!reason) return 'Отклонено';
   return REASON_LABELS[reason] ?? reason;
@@ -420,6 +525,9 @@ export function TenantApp() {
     } catch (e) {
       console.warn('crystallizeV2 failed:', e);
     }
+    // row-contextual-actions-menu ещё candidate в SDK — augment'им руками:
+    // inject delete/phase-transition intent'ы в item.intents каждого catalog'а.
+    artifactsMap = augmentCatalogRowIntents(artifactsMap, INTENTS);
 
     // Ontology-declared role names — для маппинга JWT-роли PM'а (tenant-owner)
     // на роль, которую renderer поймёт. Если JWT.role нет в ontology.roles,
