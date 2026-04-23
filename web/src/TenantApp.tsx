@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ProjectionRendererV2 } from '@intent-driven/renderer';
-import { crystallizeV2, deriveProjections } from '@intent-driven/core';
+import {
+  crystallizeV2,
+  deriveProjections,
+  generateCreateProjections,
+  generateEditProjections,
+  normalizeIntentsMap,
+} from '@intent-driven/core';
 import { AntdAdapterProvider } from '@intent-driven/adapter-antd';
 import '@intent-driven/adapter-antd/styles.css';
 import 'antd/dist/reset.css';
@@ -161,16 +167,39 @@ export function TenantApp() {
     if (!domain) return emptyReturn;
 
     const n = toNested(domain);
+
+    // normalizeIntentsMap обязателен: template'ы / importer-output хранят
+    // intents в flat-форме `{α, target, parameters}` без `particles.effects` и
+    // `creates`. Без normalize analyzeIntents не находит creators/mutators —
+    // результат: rootProjectionIds = [] и NoProjections stub вместо UI.
+    const INTENTS = normalizeIntentsMap(n.INTENTS as Record<string, unknown>) as Record<string, any>;
+
     const derived = (() => {
       try {
-        return deriveProjections(n.INTENTS, n.ONTOLOGY) ?? {};
+        return deriveProjections(INTENTS, n.ONTOLOGY) ?? {};
       } catch (e) {
         console.warn('deriveProjections failed:', e);
         return {};
       }
     })();
-    // Authored PROJECTIONS перекрывают derived поверх.
-    const merged: Record<string, any> = { ...derived };
+    const createProjs = (() => {
+      try {
+        return generateCreateProjections(INTENTS, n.PROJECTIONS ?? {}, n.ONTOLOGY) ?? {};
+      } catch (e) {
+        console.warn('generateCreateProjections failed:', e);
+        return {};
+      }
+    })();
+    const editProjs = (() => {
+      try {
+        return generateEditProjections(INTENTS, n.PROJECTIONS ?? {}, n.ONTOLOGY) ?? {};
+      } catch (e) {
+        console.warn('generateEditProjections failed:', e);
+        return {};
+      }
+    })();
+    // Authored PROJECTIONS перекрывают derived+create+edit поверх.
+    const merged: Record<string, any> = { ...derived, ...createProjs, ...editProjs };
     for (const [id, authored] of Object.entries(n.PROJECTIONS ?? {})) {
       merged[id] = merged[id] ? { ...merged[id], ...(authored as any) } : authored;
     }
@@ -178,7 +207,7 @@ export function TenantApp() {
     // crystallizeV2 signature: (INTENTS, PROJECTIONS, ONTOLOGY, domainId, opts)
     let artifactsMap: Record<string, any> = {};
     try {
-      artifactsMap = crystallizeV2(n.INTENTS, merged, n.ONTOLOGY, n.meta.id) ?? {};
+      artifactsMap = crystallizeV2(INTENTS, merged, n.ONTOLOGY, n.meta.id) ?? {};
     } catch (e) {
       console.warn('crystallizeV2 failed:', e);
     }
@@ -189,7 +218,9 @@ export function TenantApp() {
     const entitiesCount = Object.keys(n.ONTOLOGY.entities ?? {}).length;
     const intentsCount = Object.keys(n.INTENTS ?? {}).length;
     return {
-      nested: n,
+      // nested.INTENTS отдаём уже normalized: exec callback читает
+      // `intent.particles.effects` для построения effect-row.
+      nested: { ...n, INTENTS },
       mergedProjections: merged,
       artifacts: artifactsMap,
       rootProjectionIds: rootIds,
