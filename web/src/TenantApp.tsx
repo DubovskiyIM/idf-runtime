@@ -4,6 +4,7 @@ import { crystallizeV2, deriveProjections } from '@intent-driven/core';
 import { AntdAdapterProvider } from '@intent-driven/adapter-antd';
 import '@intent-driven/adapter-antd/styles.css';
 import 'antd/dist/reset.css';
+import { buildEffectsFromIntent } from './buildEffects';
 
 // AntD — более стабильный peer-граф (react>=18, antd>=5); host idf использует
 // mantine+react19, runtime остаётся на react18 — поэтому antd.
@@ -205,30 +206,42 @@ export function TenantApp() {
     }
   }, [rootProjectionIds, activeProjectionId]);
 
+  // SDK renderer вызывает exec(intentId, ctx) — runtime backend ждёт полный
+  // effect-row {alpha, entity, fields, context}. buildEffectsFromIntent читает
+  // intent.particles.effects (после normalize) или flat α+target и собирает
+  // массив effect'ов (create обычно один, replace может дать несколько).
   const exec = useCallback(
-    async (effect: EffectRow) => {
-      try {
-        const res = await fetch('/api/effects', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(effect),
-        });
-        if (res.status === 401 || res.status === 403) {
-          console.warn('auth required для /api/effects — эффект не применён');
-          return;
-        }
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          console.warn('effect rejected:', err);
-          return;
-        }
-        await refreshEffects();
-      } catch (e) {
-        console.warn('exec failed:', e);
+    async (intentId: string, ctx: Record<string, unknown> = {}) => {
+      const INTENTS = (nested?.INTENTS ?? {}) as Record<string, unknown>;
+      const effects = buildEffectsFromIntent(intentId, ctx, INTENTS, viewer);
+      if (effects.length === 0) {
+        console.warn(`exec: intent "${intentId}" не дал effect'ов (возможно, replace без value)`);
+        return;
       }
+      for (const effect of effects) {
+        try {
+          const res = await fetch('/api/effects', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(effect),
+          });
+          if (res.status === 401 || res.status === 403) {
+            console.warn('auth required для /api/effects — эффект не применён');
+            return;
+          }
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            console.warn('effect rejected:', err);
+            continue;
+          }
+        } catch (e) {
+          console.warn('exec failed:', e);
+        }
+      }
+      await refreshEffects();
     },
-    [refreshEffects],
+    [nested, viewer, refreshEffects],
   );
 
   // Rules of Hooks: все useCallback до early-return веток. Иначе React error #310
