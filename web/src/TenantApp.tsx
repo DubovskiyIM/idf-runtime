@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
 import { ProjectionRendererV2 } from '@intent-driven/renderer';
 import {
   crystallizeV2,
@@ -69,6 +69,51 @@ function sanitizeEntities(
  *
  * Выбираем по наличию uppercase ключей.
  */
+/**
+ * Coerce non-canonical α (`update`, `add`, `insert`, `delete`) в canonical.
+ *
+ * SDK crystallizeV2 / deriveProjections strict'но ждут одно из
+ * `create|replace|remove|transition|commit|read`. Любая non-canonical
+ * α крашит crystallize, TenantApp показывает `<NoProjections>` stub.
+ *
+ * Claude-авторинг иногда эмитит legacy aliases (`update` на Customer.walletBalance).
+ * До fix'а это был silent-fail: artifactsMap={}, rootProjectionIds=[],
+ * весь UI превращался в пустую заглушку. Теперь coerce'им до SDK-call'а
+ * и sanitize'им intent-by-intent.
+ */
+const ALPHA_ALIASES: Record<string, string> = {
+  update: 'replace',
+  add: 'create',
+  insert: 'create',
+  delete: 'remove',
+};
+function coerceAlpha(a: unknown): string | undefined {
+  if (typeof a !== 'string') return undefined;
+  return ALPHA_ALIASES[a] ?? a;
+}
+function normalizeIntentAlphas(
+  intents: Record<string, unknown>,
+): { intents: Record<string, unknown>; coerced: Array<{ id: string; from: string; to: string }> } {
+  const out: Record<string, unknown> = {};
+  const coerced: Array<{ id: string; from: string; to: string }> = [];
+  for (const [id, raw] of Object.entries(intents ?? {})) {
+    if (!raw || typeof raw !== 'object') {
+      out[id] = raw;
+      continue;
+    }
+    const r = raw as Record<string, unknown>;
+    const rawAlpha = typeof r.α === 'string' ? (r.α as string) : typeof r.alpha === 'string' ? (r.alpha as string) : undefined;
+    const canonical = coerceAlpha(rawAlpha);
+    if (rawAlpha && canonical && rawAlpha !== canonical) {
+      coerced.push({ id, from: rawAlpha, to: canonical });
+      out[id] = { ...r, α: canonical, alpha: canonical };
+    } else {
+      out[id] = r;
+    }
+  }
+  return { intents: out, coerced };
+}
+
 function toNested(raw: MaybeNested): NestedDomain {
   const isNested =
     raw && typeof raw === 'object' &&
@@ -242,6 +287,7 @@ export function TenantApp() {
     domainId,
     description,
     isEmpty,
+    diagnostics,
   } = useMemo(() => {
     const emptyReturn = {
       nested: null,
@@ -252,16 +298,39 @@ export function TenantApp() {
       domainId: 'tenant',
       description: undefined as string | undefined,
       isEmpty: true,
+      diagnostics: undefined as
+        | undefined
+        | {
+            entitiesCount: number;
+            intentsCount: number;
+            readIntents: string[];
+            writeIntents: string[];
+            entities: string[];
+            artifactsCount: number;
+          },
     };
     if (!domain) return emptyReturn;
 
     const n = toNested(domain);
 
+    // Сначала — coerce non-canonical α (update/add/insert/delete → canonical).
+    // Без этого Claude-авторинг с одним ошибочным α ломал крyстализацию
+    // целиком и user'у показывался NoProjections stub.
+    const { intents: canonicalIntents, coerced } = normalizeIntentAlphas(
+      n.INTENTS as Record<string, unknown>,
+    );
+    if (coerced.length > 0) {
+      console.warn(
+        '[TenantApp] coerced non-canonical α (Claude authoring glitch):',
+        coerced.map((c) => `${c.id}: ${c.from}→${c.to}`).join(', '),
+      );
+    }
+
     // normalizeIntentsMap обязателен: template'ы / importer-output хранят
     // intents в flat-форме `{α, target, parameters}` без `particles.effects` и
     // `creates`. Без normalize analyzeIntents не находит creators/mutators —
     // результат: rootProjectionIds = [] и NoProjections stub вместо UI.
-    const INTENTS = normalizeIntentsMap(n.INTENTS as Record<string, unknown>) as Record<string, any>;
+    const INTENTS = normalizeIntentsMap(canonicalIntents) as Record<string, any>;
 
     const derived = (() => {
       try {
@@ -306,6 +375,18 @@ export function TenantApp() {
 
     const entitiesCount = Object.keys(n.ONTOLOGY.entities ?? {}).length;
     const intentsCount = Object.keys(n.INTENTS ?? {}).length;
+
+    // Diagnostics для empty-state: помогает PM'у понять, почему projections не
+    // вывелись (нет read-intent'ов / SDK упал на non-canonical α / etc).
+    const readIntents: string[] = [];
+    const writeIntents: string[] = [];
+    for (const [iid, raw] of Object.entries(n.INTENTS ?? {})) {
+      const r = raw as { α?: string; alpha?: string };
+      const α = r.α ?? r.alpha;
+      if (α === 'read') readIntents.push(iid);
+      else if (α) writeIntents.push(iid);
+    }
+
     return {
       // nested.INTENTS отдаём уже normalized: exec callback читает
       // `intent.particles.effects` для построения effect-row.
@@ -317,6 +398,14 @@ export function TenantApp() {
       domainId: n.meta.id,
       description: n.meta.description,
       isEmpty: entitiesCount === 0 && intentsCount === 0,
+      diagnostics: {
+        entitiesCount,
+        intentsCount,
+        readIntents,
+        writeIntents,
+        entities: Object.keys(n.ONTOLOGY.entities ?? {}),
+        artifactsCount: Object.keys(artifactsMap).length,
+      },
     };
   }, [domain, effects]);
 
@@ -472,7 +561,7 @@ export function TenantApp() {
           {isEmpty ? (
             <EmptyDomain description={description} />
           ) : rootProjectionIds.length === 0 ? (
-            <NoProjections domainId={domainId} description={description} />
+            <NoProjections domainId={domainId} description={description} diagnostics={diagnostics} />
           ) : (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'row', minHeight: 0 }}>
               <nav
@@ -528,19 +617,21 @@ export function TenantApp() {
               </nav>
               <main style={{ flex: 1, overflow: 'auto', padding: 24, background: '#fff' }}>
                 {activeArtifact ? (
-                  <ProjectionRendererV2
-                    artifact={activeArtifact}
-                    projection={activeProjection}
-                    artifacts={artifacts}
-                    allProjections={mergedProjections}
-                    world={world}
-                    viewer={viewer}
-                    viewerContext={{ userId: viewer.id, userName: viewer.name }}
-                    exec={exec}
-                    routeParams={{}}
-                    navigate={navigate}
-                    back={back}
-                  />
+                  <RendererBoundary pid={activeProjectionId ?? 'unknown'}>
+                    <ProjectionRendererV2
+                      artifact={activeArtifact}
+                      projection={activeProjection}
+                      artifacts={artifacts}
+                      allProjections={mergedProjections}
+                      world={world}
+                      viewer={viewer}
+                      viewerContext={{ userId: viewer.id, userName: viewer.name }}
+                      exec={exec}
+                      routeParams={{}}
+                      navigate={navigate}
+                      back={back}
+                    />
+                  </RendererBoundary>
                 ) : (
                   <div style={{ color: '#6b7280' }}>Выберите раздел слева</div>
                 )}
@@ -637,7 +728,89 @@ function EmptyDomain({ description }: { description?: string }) {
   );
 }
 
-function NoProjections({ domainId, description }: { domainId: string; description?: string }) {
+/**
+ * ErrorBoundary вокруг ProjectionRendererV2. Renderer может бросить на любой
+ * ontology-malformation (например incomplete compositions, unexpected field
+ * shape). До boundary это было blank-screen — теперь PM видит error + stack
+ * + название projection'а, что ускоряет debug.
+ *
+ * Reset при смене pid через key={pid} на boundary'е.
+ */
+type RendererBoundaryState = { error: Error | null; info: ErrorInfo | null };
+class RendererBoundary extends Component<{ pid: string; children: ReactNode }, RendererBoundaryState> {
+  state: RendererBoundaryState = { error: null, info: null };
+  static getDerivedStateFromError(error: Error): RendererBoundaryState {
+    return { error, info: null };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[RendererBoundary]', this.props.pid, error, info);
+    this.setState({ error, info });
+  }
+  componentDidUpdate(prev: { pid: string }) {
+    if (prev.pid !== this.props.pid && this.state.error) {
+      this.setState({ error: null, info: null });
+    }
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            padding: 24,
+            border: '1px solid #fecaca',
+            borderRadius: 8,
+            background: '#fef2f2',
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: 12,
+            lineHeight: 1.6,
+            color: '#991b1b',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13 }}>
+            Renderer упал на projection <code>{this.props.pid}</code>
+          </div>
+          <div style={{ color: '#7f1d1d', marginBottom: 10 }}>{this.state.error.message}</div>
+          {this.state.info?.componentStack && (
+            <pre
+              style={{
+                fontSize: 10.5,
+                color: '#9f1239',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                margin: 0,
+                maxHeight: 200,
+                overflow: 'auto',
+              }}
+            >
+              {this.state.info.componentStack}
+            </pre>
+          )}
+          <div style={{ marginTop: 12, color: '#6b7280', fontSize: 11 }}>
+            Откройте DevTools Console для полного stack trace.
+          </div>
+        </div>
+      );
+    }
+    return <>{this.props.children}</>;
+  }
+}
+
+function NoProjections({
+  domainId,
+  description,
+  diagnostics,
+}: {
+  domainId: string;
+  description?: string;
+  diagnostics?: {
+    entitiesCount: number;
+    intentsCount: number;
+    readIntents: string[];
+    writeIntents: string[];
+    entities: string[];
+    artifactsCount: number;
+  };
+}) {
   return (
     <div style={{ flex: 1, padding: 48, maxWidth: 720, margin: '0 auto' }}>
       <div
@@ -655,8 +828,48 @@ function NoProjections({ domainId, description }: { domainId: string; descriptio
       <h1 style={{ fontFamily: 'Fraunces, serif', fontWeight: 500, fontSize: '2rem', marginBottom: 12 }}>{domainId}</h1>
       {description && <p style={{ color: '#6b7280', fontSize: 15, lineHeight: 1.55 }}>{description}</p>}
       <p style={{ color: '#6b7280', fontSize: 14, marginTop: 20 }}>
-        Проекции ещё не выведены. Добавьте сущности и действия в IDF Studio — SDK автоматически сгенерирует экраны.
+        Проекции ещё не выведены. Вероятные причины ниже.
       </p>
+
+      {diagnostics && (
+        <div
+          style={{
+            marginTop: 24,
+            padding: 20,
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            background: '#fafafa',
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: 12,
+            lineHeight: 1.7,
+            color: '#374151',
+          }}
+        >
+          <div style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#9ca3af', marginBottom: 12 }}>
+            Диагностика
+          </div>
+          <div>Сущности: <strong>{diagnostics.entitiesCount}</strong> ({diagnostics.entities.join(', ') || '—'})</div>
+          <div>Intent'ов: <strong>{diagnostics.intentsCount}</strong></div>
+          <div>
+            &nbsp;&nbsp;read: {diagnostics.readIntents.length > 0 ? diagnostics.readIntents.join(', ') : <span style={{ color: '#dc2626' }}>нет (нужен минимум один list_*)</span>}
+          </div>
+          <div>&nbsp;&nbsp;write: {diagnostics.writeIntents.length}</div>
+          <div>
+            Artifacts (после crystallizeV2): <strong style={{ color: diagnostics.artifactsCount === 0 ? '#dc2626' : '#16a34a' }}>{diagnostics.artifactsCount}</strong>
+          </div>
+          {diagnostics.readIntents.length === 0 ? (
+            <div style={{ marginTop: 14, padding: 10, background: '#fef3c7', borderRadius: 4, color: '#92400e' }}>
+              Нет <code>α: "read"</code> intent'ов → <code>deriveProjections</code> возвращает пусто. Попроси Claude
+              добавить <code>list_&lt;entity&gt;</code> для каждой сущности.
+            </div>
+          ) : diagnostics.artifactsCount === 0 ? (
+            <div style={{ marginTop: 14, padding: 10, background: '#fef3c7', borderRadius: 4, color: '#92400e' }}>
+              Read-intent'ы есть, но artifacts = 0. Проверь консоль — возможно <code>crystallizeV2</code> упал
+              на non-canonical <code>α</code> (update/add/delete — coerce'нуто в runtime, но SDK-внутри мог не справиться).
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
