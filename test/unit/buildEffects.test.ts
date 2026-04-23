@@ -153,4 +153,99 @@ describe('buildEffectsFromIntent', () => {
       expect((e.context as any).actor).toBe('user-1');
     });
   });
+
+  // Regression: до fix'а particles.effects[*].fields игнорировались buildEffects'ом
+  // → phase-transitions без параметров (qualify_deal, submit_proposal) молча
+  // пропускались, defaults (status:"new" на create_lead) не попадали в effect.
+  describe('particles.effects[*].fields merge', () => {
+    it('create: mergeит src.fields (дефолты) перед ctx — user-input побеждает', () => {
+      const INTENTS = {
+        create_lead: {
+          α: 'create',
+          target: 'Lead',
+          particles: {
+            effects: [{ α: 'create', target: 'Lead', fields: { status: 'new' } }],
+          },
+        },
+      };
+      const [e] = buildEffectsFromIntent(
+        'create_lead',
+        { name: 'Acme', email: 'a@b.c' },
+        INTENTS,
+        viewer,
+      );
+      expect(e.fields.status).toBe('new'); // дефолт из particles
+      expect(e.fields.name).toBe('Acme');
+      expect(e.fields.email).toBe('a@b.c');
+      expect(typeof e.fields.id).toBe('string');
+    });
+
+    it('create: ctx побеждает дефолт если передал то же поле', () => {
+      const INTENTS = {
+        create_lead: {
+          α: 'create',
+          target: 'Lead',
+          particles: {
+            effects: [{ α: 'create', target: 'Lead', fields: { status: 'new' } }],
+          },
+        },
+      };
+      const [e] = buildEffectsFromIntent(
+        'create_lead',
+        { name: 'A', status: 'qualified' },
+        INTENTS,
+        viewer,
+      );
+      expect(e.fields.status).toBe('qualified');
+    });
+
+    it('replace: phase-transition с fields в particles (ctx={id}) — больше не скипается', () => {
+      const INTENTS = {
+        qualify_deal: {
+          α: 'replace',
+          target: 'Deal.stage',
+          particles: {
+            effects: [{ α: 'replace', target: 'Deal.stage', fields: { stage: 'qualified' } }],
+          },
+        },
+      };
+      const effects = buildEffectsFromIntent('qualify_deal', { id: 'd-1' }, INTENTS, viewer);
+      expect(effects).toHaveLength(1);
+      expect(effects[0].alpha).toBe('replace');
+      expect(effects[0].entity).toBe('Deal');
+      expect(effects[0].fields.id).toBe('d-1');
+      expect(effects[0].fields.stage).toBe('qualified');
+    });
+
+    it('replace: lose_deal — src.fields.stage + ctx.lossReason (оба попадают)', () => {
+      const INTENTS = {
+        lose_deal: {
+          α: 'replace',
+          target: 'Deal.stage',
+          particles: {
+            effects: [{ α: 'replace', target: 'Deal.stage', fields: { stage: 'lost' } }],
+          },
+        },
+      };
+      const [e] = buildEffectsFromIntent(
+        'lose_deal',
+        { id: 'd-1', lossReason: 'price' },
+        INTENTS,
+        viewer,
+      );
+      expect(e.fields.stage).toBe('lost');
+      expect(e.fields.lossReason).toBe('price');
+    });
+
+    it('replace без value (нет fields ни в particles, ни в ctx) — по-прежнему скипается', () => {
+      const INTENTS = {
+        advance_stage: {
+          α: 'replace',
+          target: 'Deal.stage',
+        },
+      };
+      const effects = buildEffectsFromIntent('advance_stage', { id: 'd-1' }, INTENTS, viewer);
+      expect(effects).toHaveLength(0);
+    });
+  });
 });
