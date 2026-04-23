@@ -288,6 +288,7 @@ export function TenantApp() {
     description,
     isEmpty,
     diagnostics,
+    ontologyRoles,
   } = useMemo(() => {
     const emptyReturn = {
       nested: null,
@@ -308,6 +309,7 @@ export function TenantApp() {
             entities: string[];
             artifactsCount: number;
           },
+      ontologyRoles: {} as Record<string, { base?: string; visibleFields?: unknown }>,
     };
     if (!domain) return emptyReturn;
 
@@ -369,6 +371,16 @@ export function TenantApp() {
     } catch (e) {
       console.warn('crystallizeV2 failed:', e);
     }
+
+    // Ontology-declared role names — для маппинга JWT-роли PM'а (tenant-owner)
+    // на роль, которую renderer поймёт. Если JWT.role нет в ontology.roles,
+    // SDK filter даёт пустой мир + нулевые visibleFields → список выглядит
+    // пустым несмотря на записи в Φ. Fallback: роль с base:"admin" как
+    // наиболее широкая по visibleFields; иначе — первая объявленная.
+    const ontologyRoles = (n.ONTOLOGY.roles ?? {}) as Record<
+      string,
+      { base?: string; visibleFields?: unknown }
+    >;
 
     // Root projections: правильный nav-set для shell'а.
     //
@@ -435,8 +447,27 @@ export function TenantApp() {
         entities: Object.keys(n.ONTOLOGY.entities ?? {}),
         artifactsCount: Object.keys(artifactsMap).length,
       },
+      ontologyRoles,
     };
   }, [domain, effects]);
+
+  // JWT role → ontology-declared role (tenant-owner маппим в admin-base).
+  // Нужно чтобы SDK filterWorldForRole / renderer visibility видели знакомую
+  // роль и не отсеивали всё до пустоты.
+  const effectiveRole = useMemo(() => {
+    if (!ontologyRoles || Object.keys(ontologyRoles).length === 0) return viewer.role;
+    if (ontologyRoles[viewer.role]) return viewer.role;
+    // tenant-owner fallback: ищем admin-base, затем любую первую
+    for (const [rname, rdef] of Object.entries(ontologyRoles)) {
+      if ((rdef as { base?: string }).base === 'admin') return rname;
+    }
+    return Object.keys(ontologyRoles)[0] ?? viewer.role;
+  }, [ontologyRoles, viewer.role]);
+
+  const effectiveViewer = useMemo(
+    () => ({ ...viewer, role: effectiveRole }),
+    [viewer, effectiveRole],
+  );
 
   useEffect(() => {
     if (!activeProjectionId && rootProjectionIds.length > 0) {
@@ -580,9 +611,16 @@ export function TenantApp() {
                   letterSpacing: '0.04em',
                   color: '#374151',
                 }}
-                title="Текущая роль (из JWT membership)"
+                title={
+                  effectiveRole !== viewer.role
+                    ? `JWT membership: ${viewer.role} → отображается как ${effectiveRole} (этой роли нет в ontology.roles, используется admin-base fallback)`
+                    : 'Текущая роль (из JWT membership)'
+                }
               >
                 вы: {viewer.role}
+                {effectiveRole !== viewer.role && (
+                  <span style={{ color: '#9ca3af', marginLeft: 6 }}>→ {effectiveRole}</span>
+                )}
               </span>
             </span>
           </header>
@@ -661,7 +699,7 @@ export function TenantApp() {
                       artifacts={artifacts}
                       allProjections={mergedProjections}
                       world={world}
-                      viewer={viewer}
+                      viewer={effectiveViewer}
                       viewerContext={{ userId: viewer.id, userName: viewer.name }}
                       exec={exec}
                       routeParams={{}}
