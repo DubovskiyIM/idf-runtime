@@ -1,4 +1,5 @@
 import express from 'express';
+import cookieParser from 'cookie-parser';
 import { pinoHttp } from 'pino-http';
 import Database from 'better-sqlite3';
 import { join } from 'node:path';
@@ -54,6 +55,7 @@ if (env.BACKUP_ENABLED && s3 && env.S3_BUCKET) {
 
 const app = express();
 app.use(pinoHttp({ logger }));
+app.use(cookieParser());
 app.use(
   express.json({
     verify: (req: any, _res, buf) => {
