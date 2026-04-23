@@ -23,9 +23,20 @@ type Intent = {
   alpha?: string;
   target?: string;
   creates?: string;
-  parameters?: Array<{ name: string; type?: string; ref?: string }>;
+  parameters?: Array<{ name: string; type?: string; ref?: string; entity?: string }>;
   particles?: {
-    effects?: Array<{ α?: string; op?: string; target?: string }>;
+    effects?: Array<{
+      α?: string;
+      op?: string;
+      target?: string;
+      /**
+       * Статические defaults/фиксированные значения для effect'а.
+       * Используется в phase-transition intents (stage:"qualified") и
+       * в create-intents для дефолтов (status:"new"). Мерджится в
+       * fields ПЕРЕД ctx — user-input всегда побеждает.
+       */
+      fields?: Record<string, unknown>;
+    }>;
   };
   context?: Record<string, unknown>;
 };
@@ -107,7 +118,12 @@ export function buildEffectsFromIntent(
   // Предпочитаем explicit particles.effects[] (после normalizeIntentNative);
   // fallback на top-level α+target (legacy flat-форма).
   const particleEffects = intent.particles?.effects ?? [];
-  const sources: Array<{ α?: string; op?: string; target?: string }> =
+  const sources: Array<{
+    α?: string;
+    op?: string;
+    target?: string;
+    fields?: Record<string, unknown>;
+  }> =
     particleEffects.length > 0
       ? particleEffects
       : intent.α || intent.alpha
@@ -120,12 +136,19 @@ export function buildEffectsFromIntent(
     const entity = toEntityName(src.target, intent);
     if (!α || !entity) continue;
 
+    // src.fields — статические defaults/фиксированные values из ontology
+    // (particles.effects[*].fields). Мерджим ПЕРЕД ctx — user-input побеждает.
+    // Критично для phase-transition intents (qualify_deal / win_deal / и т.д.),
+    // где stage value лежит ТОЛЬКО в src.fields (не в ctx), и для create-intents
+    // с дефолтами (create_lead → status:"new").
+    const srcFields = (src.fields ?? {}) as Record<string, unknown>;
+
     if (α === 'create') {
       const id = typeof ctx.id === 'string' ? ctx.id : randomId(entity);
       out.push({
         alpha: 'create',
         entity,
-        fields: { id, ...ctx },
+        fields: { ...srcFields, id, ...ctx },
         context: actorCtx,
       });
       continue;
@@ -134,7 +157,7 @@ export function buildEffectsFromIntent(
     if (α === 'replace') {
       const id = findEntityId(ctx, entity);
       if (!id) continue;
-      const fields: Record<string, unknown> = { id };
+      const fields: Record<string, unknown> = { id, ...srcFields };
       // dotted target "Lead.status" → если ctx содержит `status`, берём его
       const dotIdx = (src.target ?? '').indexOf('.');
       const fieldName = dotIdx >= 0 ? (src.target ?? '').slice(dotIdx + 1) : null;
@@ -143,11 +166,10 @@ export function buildEffectsFromIntent(
         // inline setter передаёт {id, field: value} — включаем всё, что не id
         fields[k] = v;
       }
-      // Если dotted target указал поле, а ctx его не содержит — оставляем empty
-      // patch (runtime validator отклонит, это приемлемо в demo для transition'ов
-      // без explicit value encoding; backlog: дополнить онтологию transitions)
+      // Если dotted target указал поле, а его не оказалось ни в srcFields,
+      // ни в ctx — replace молча игнорируется. До fix'а это срабатывало даже
+      // для явных phase-transition'ов с fields в particles.effects.
       if (fieldName && fields[fieldName] === undefined) {
-        // no-op — пропускаем replace без value
         continue;
       }
       out.push({ alpha: 'replace', entity, fields, context: actorCtx });
