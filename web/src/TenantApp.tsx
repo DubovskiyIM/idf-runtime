@@ -261,6 +261,13 @@ export function TenantApp() {
   const [domain, setDomain] = useState<FlatDomain | null>(null);
   const [effects, setEffects] = useState<EffectRow[]>([]);
   const [activeProjectionId, setActiveProjectionId] = useState<string | null>(null);
+  // routeParams нужен SDK'шному ArchetypeDetail для resolve id через idParam:
+  //   const id = parentCtx.routeParams?.[projection.idParam];
+  // Без prop'а detail всегда падает в «Выбери элемент из списка» после
+  // item-click'а из catalog'а.
+  const [routeParams, setRouteParams] = useState<Record<string, string>>({});
+  // Nav-history стек — чтобы back() возвращал на catalog, не в emptyState.
+  const [navStack, setNavStack] = useState<Array<{ pid: string; params: Record<string, string> }>>([]);
   const [error, setError] = useState<string | null>(null);
   // Viewer init'ится с safe fallback (role="owner" — super-bypass в validator
   // если ontology его не объявит); фактическое значение из /api/viewer
@@ -581,14 +588,29 @@ export function TenantApp() {
   // из null в загруженное состояние.
   const navigate = useCallback(
     (projectionId: string, params?: Record<string, string>) => {
-      if (artifacts[projectionId]) {
-        setActiveProjectionId(projectionId);
+      if (!artifacts[projectionId]) {
+        return { projectionId, params: params ?? {} };
       }
+      // Push текущее в стек — для back'а. Пропускаем initial state.
+      if (activeProjectionId) {
+        setNavStack((s) => [...s, { pid: activeProjectionId, params: routeParams }]);
+      }
+      setActiveProjectionId(projectionId);
+      setRouteParams(params ?? {});
       return { projectionId, params: params ?? {} };
     },
-    [artifacts],
+    [artifacts, activeProjectionId, routeParams],
   );
-  const back = useCallback(() => undefined, []);
+
+  const back = useCallback(() => {
+    setNavStack((s) => {
+      if (s.length === 0) return s;
+      const prev = s[s.length - 1];
+      setActiveProjectionId(prev.pid);
+      setRouteParams(prev.params);
+      return s.slice(0, -1);
+    });
+  }, []);
 
   if (error) {
     return (
@@ -711,7 +733,14 @@ export function TenantApp() {
                   return (
                     <button
                       key={pid}
-                      onClick={() => setActiveProjectionId(pid)}
+                      onClick={() => {
+                        // Top-level nav click — сбрасываем routeParams и стек,
+                        // иначе при возврате на catalog через sidebar detail
+                        // всё ещё видит старый id.
+                        setActiveProjectionId(pid);
+                        setRouteParams({});
+                        setNavStack([]);
+                      }}
                       style={{
                         display: 'block',
                         width: '100%',
@@ -733,6 +762,27 @@ export function TenantApp() {
                 })}
               </nav>
               <main style={{ flex: 1, overflow: 'auto', padding: 24, background: '#fff' }}>
+                {navStack.length > 0 && (
+                  <button
+                    onClick={back}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 8px',
+                      marginBottom: 16,
+                      border: '1px solid #e5e7eb',
+                      borderRadius: 4,
+                      background: '#fafafa',
+                      color: '#374151',
+                      fontSize: 12,
+                      fontFamily: 'JetBrains Mono, monospace',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ← Назад
+                  </button>
+                )}
                 {activeArtifact ? (
                   <RendererBoundary pid={activeProjectionId ?? 'unknown'}>
                     <ProjectionRendererV2
@@ -744,7 +794,7 @@ export function TenantApp() {
                       viewer={effectiveViewer}
                       viewerContext={{ userId: viewer.id, userName: viewer.name }}
                       exec={exec}
-                      routeParams={{}}
+                      routeParams={routeParams}
                       navigate={navigate}
                       back={back}
                     />
