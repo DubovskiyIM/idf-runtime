@@ -175,7 +175,15 @@ export function TenantApp() {
   const [effects, setEffects] = useState<EffectRow[]>([]);
   const [activeProjectionId, setActiveProjectionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [viewer] = useState({ id: 'tenant-viewer', name: 'Tenant', role: 'owner' });
+  // Viewer init'ится с safe fallback (role="owner" — super-bypass в validator
+  // если ontology его не объявит); фактическое значение из /api/viewer
+  // перезаписывает при mount'е, чтобы renderer filter'ил projections
+  // по реальной роли из JWT.
+  const [viewer, setViewer] = useState<{ id: string; name: string; role: string }>({
+    id: 'tenant-viewer',
+    name: 'Tenant',
+    role: 'owner',
+  });
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const pushToast = useCallback((t: Omit<Toast, 'id'>) => {
@@ -210,6 +218,18 @@ export function TenantApp() {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`domain ${r.status}`))))
       .then((d: FlatDomain) => setDomain(d))
       .catch((e) => setError(e.message));
+
+    fetch('/api/viewer', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((v: { userId?: string; role?: string } | null) => {
+        if (v?.userId && v.role) {
+          setViewer({ id: v.userId, name: v.userId.slice(0, 8), role: v.role });
+        }
+      })
+      .catch(() => {
+        // 401 — без JWT останемся на fallback'е; UI и так ограничен viewer-routes
+      });
+
     refreshEffects();
   }, [refreshEffects]);
 
@@ -429,7 +449,24 @@ export function TenantApp() {
             }}
           >
             <strong style={{ color: '#111', letterSpacing: '0.08em' }}>IDF APP</strong>
-            <span>{domainId}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <span>{domainId}</span>
+              <span
+                style={{
+                  padding: '2px 8px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: 10,
+                  background: '#f3f4f6',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: 10.5,
+                  letterSpacing: '0.04em',
+                  color: '#374151',
+                }}
+                title="Текущая роль (из JWT membership)"
+              >
+                вы: {viewer.role}
+              </span>
+            </span>
           </header>
 
           {isEmpty ? (

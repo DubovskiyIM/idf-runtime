@@ -24,6 +24,7 @@ import { createVoiceRouter } from './routes/voice.js';
 import { createDocumentRouter } from './routes/document.js';
 import { createAgentRouter } from './routes/agent.js';
 import { createEffectsRouter } from './routes/effects.js';
+import { createViewerInfoRouter } from './routes/viewer-info.js';
 import { createTenantIndexRouter } from './routes/tenant-index.js';
 import { makeValidator } from './validator.js';
 
@@ -145,6 +146,7 @@ const getWorld = (_viewer: any) => {
   return world;
 };
 
+withViewer.use(createViewerInfoRouter());
 withViewer.use(createVoiceRouter({ getDomain: () => currentDomain, getWorld }));
 withViewer.use(createDocumentRouter({ getDomain: () => currentDomain, getWorld }));
 withViewer.use(createAgentRouter({ getDomain: () => currentDomain, getWorld }));
