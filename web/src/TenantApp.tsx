@@ -39,6 +39,30 @@ type NestedDomain = {
 type MaybeNested = FlatDomain & Partial<NestedDomain>;
 
 /**
+ * Очищает entity.fields от null-значений. Studio `mergePatch` мержит
+ * patches поверх existing domain — если Claude прислал `{fields: {x: null}}`
+ * (намерение удалить) или автосинк снёс поле после revision'а, null кладётся
+ * в fields и ломает SDK `detectForeignKeys` (он ждёт object с .type).
+ * Deep-clean перед crystallize, аналогично studio preview sanitizeEntities.
+ */
+function sanitizeEntities(
+  entities: Record<string, unknown>,
+): Record<string, { fields: Record<string, unknown>; [k: string]: unknown }> {
+  const out: Record<string, { fields: Record<string, unknown>; [k: string]: unknown }> = {};
+  for (const [name, entity] of Object.entries(entities ?? {})) {
+    if (!entity || typeof entity !== 'object') continue;
+    const src = entity as { fields?: Record<string, unknown>; [k: string]: unknown };
+    const fields: Record<string, unknown> = {};
+    for (const [fname, fspec] of Object.entries(src.fields ?? {})) {
+      if (fspec && typeof fspec === 'object') fields[fname] = fspec;
+      // null / undefined / primitives — пропускаем
+    }
+    out[name] = { ...src, fields };
+  }
+  return out;
+}
+
+/**
  * Detect-then-normalize: runtime /api/domain может отдать:
  *  (a) flat shape  (legacy loader): { entities, intents, roles, projections, invariants, meta }
  *  (b) nested shape (studio seedDomain пишет как есть): { INTENTS, PROJECTIONS, ONTOLOGY:{entities, roles, invariants}, meta }
@@ -56,7 +80,7 @@ function toNested(raw: MaybeNested): NestedDomain {
       INTENTS: raw.INTENTS ?? {},
       PROJECTIONS: raw.PROJECTIONS ?? {},
       ONTOLOGY: {
-        entities: raw.ONTOLOGY?.entities ?? {},
+        entities: sanitizeEntities(raw.ONTOLOGY?.entities ?? {}),
         roles: raw.ONTOLOGY?.roles ?? {},
         invariants: raw.ONTOLOGY?.invariants ?? [],
       },
@@ -69,7 +93,7 @@ function toNested(raw: MaybeNested): NestedDomain {
     INTENTS: raw.intents ?? {},
     PROJECTIONS: raw.projections ?? {},
     ONTOLOGY: {
-      entities: raw.entities ?? {},
+      entities: sanitizeEntities(raw.entities ?? {}),
       roles: raw.roles ?? {},
       invariants: raw.invariants ?? [],
     },
