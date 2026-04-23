@@ -23,6 +23,19 @@ export type PhiStore = {
   audit(opts: { since?: Date; entity?: string; limit?: number; offset?: number }): ConfirmedEffect[];
   rejected(opts?: { since?: Date; limit?: number }): RejectedEffect[];
   count(): number;
+  /**
+   * Bulk-insert effects с provided id через INSERT OR IGNORE. Идемпотентен:
+   * повторный вызов не дублирует. Используется orchestrator'ом для seed'а
+   * template'ов (sales-crm sample data после первого deploy'а).
+   *
+   * Не проходит через validator — caller гарантирует валидность (seed'ы
+   * прописаны в template JSON автором template'а, не user input).
+   *
+   * Returns: { inserted: number } — сколько rows действительно добавлено.
+   */
+  seedBatch(
+    effects: Array<Effect & { id: string; confirmedAt?: string }>,
+  ): { inserted: number };
 };
 
 export function createPhiStore(db: Database.Database): PhiStore {
@@ -107,6 +120,31 @@ export function createPhiStore(db: Database.Database): PhiStore {
     },
     count() {
       return (countStmt.get() as any).c;
+    },
+    seedBatch(effects) {
+      // INSERT OR IGNORE — id-conflict silently skip'ает. Transaction для
+      // атомарности + ускорения (better-sqlite3 flushes fsync per stmt иначе).
+      const stmt = db.prepare(
+        `INSERT OR IGNORE INTO phi_effects(id, alpha, entity, fields_json, context_json, confirmed_at)
+         VALUES(@id, @alpha, @entity, @fields_json, @context_json, @confirmed_at)`,
+      );
+      const txn = db.transaction((rows: typeof effects) => {
+        let inserted = 0;
+        for (const e of rows) {
+          const r = stmt.run({
+            id: e.id,
+            alpha: e.alpha,
+            entity: e.entity,
+            fields_json: JSON.stringify(e.fields),
+            context_json: JSON.stringify(e.context ?? {}),
+            confirmed_at: e.confirmedAt ?? new Date().toISOString(),
+          });
+          if (r.changes > 0) inserted += 1;
+        }
+        return inserted;
+      });
+      const inserted = txn(effects);
+      return { inserted };
     },
   };
 }

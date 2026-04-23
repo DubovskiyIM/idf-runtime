@@ -17,6 +17,7 @@ import { createReloadRouter } from './admin/reload.js';
 import { createAuditRouter } from './admin/audit.js';
 import { createAdminHealthRouter } from './admin/health.js';
 import { createSnapshotRouter } from './admin/snapshot.js';
+import { createSeedRouter } from './admin/seed.js';
 import { createS3Client } from './s3/client.js';
 import { startBackupCron } from './cron/s3-backup.js';
 import { createVoiceRouter } from './routes/voice.js';
@@ -107,6 +108,7 @@ app.use(
   })
 );
 app.use(createAuditRouter({ store, secret: env.TENANT_HMAC_SECRET }));
+app.use(createSeedRouter({ store, secret: env.TENANT_HMAC_SECRET }));
 app.use(createAdminHealthRouter({ store, secret: env.TENANT_HMAC_SECRET }));
 app.use(
   createSnapshotRouter({
