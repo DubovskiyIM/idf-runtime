@@ -20,8 +20,13 @@ export function createViewerMiddleware(
 ) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const auth = req.get('authorization') ?? '';
-    // M1: только Bearer token (cookie-flow — M1.2 studio integration)
-    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    // M1.2: cookie flow. Iframe'ы tenant'а в studio не могут set Bearer,
+    // поэтому читаем JWT cookie `idf_jwt` если Bearer отсутствует. Требует
+    // cookieParser middleware выше в chain'е и cookie Domain=.intent-design.tech
+    // при set (идентити plane + studio).
+    const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const cookieToken = (req as Request & { cookies?: Record<string, string> }).cookies?.idf_jwt;
+    const token = bearer || cookieToken || '';
     if (!token) return res.status(401).json({ error: 'no_token' });
 
     try {
