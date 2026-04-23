@@ -21,6 +21,29 @@ export type EffectsDeps = {
 
 export function createEffectsRouter(deps: EffectsDeps): Router {
   const router = Router();
+
+  /**
+   * GET /api/effects — вернуть confirmed Φ-trail для текущего viewer'а.
+   *
+   * Runtime'у не нужен role-based filter здесь — TenantApp фильтрует world
+   * на клиенте через crystallize + renderer ownership checks. Все viewer'ы
+   * с валидным JWT и membership на этот slug получают полный trail; scope
+   * enforced через fold + projection-level gating.
+   *
+   * v1: плоский массив без пагинации (tenant обычно ≤ сотен записей в
+   * demo-фазе). Follow-up — since / limit params, если dataset растёт.
+   */
+  router.get('/api/effects', (req, res, next) => {
+    try {
+      const viewer = req.viewer;
+      if (!viewer) return res.status(401).json({ error: 'no_viewer' });
+      const effects = deps.store.all();
+      return res.json({ effects });
+    } catch (e) {
+      return next(e);
+    }
+  });
+
   router.post('/api/effects', (req, res, next) => {
     try {
       const viewer = req.viewer;
