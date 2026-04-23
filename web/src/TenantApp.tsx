@@ -121,6 +121,38 @@ function humanizeId(id: string): string {
     .replace(/_/g, ' ');
 }
 
+type Toast = {
+  id: string;
+  kind: 'error' | 'warn' | 'info';
+  title: string;
+  details?: string;
+};
+
+/**
+ * Читаемые labels для validator-reason codes. Runtime validator emit'ает
+ * канонические strings (unknown_role, role_cannot_execute, invariant_*, и т.д.);
+ * UI делает их user-friendly. Неизвестные codes показываются as-is.
+ */
+const REASON_LABELS: Record<string, string> = {
+  unknown_role: 'Роль не объявлена в ontology',
+  role_cannot_execute: 'Роль не имеет прав на это действие',
+  invariant_referential: 'Нарушение referential integrity (broken FK)',
+  invariant_cardinality: 'Нарушение cardinality (слишком много записей)',
+  invariant_transition: 'Недопустимый переход состояния',
+  invariant_aggregate: 'Нарушение агрегата (сумма / count вышел за предел)',
+  invariant_expression: 'Нарушение инварианта',
+  invariant_role_capability: 'Роль не может выполнить это действие (capability)',
+  preapproval: 'Агент-лимит превышен (preapproval)',
+  preapproval_error: 'Ошибка проверки preapproval',
+  invalid_effect: 'Effect не прошёл schema-валидацию',
+  no_viewer: 'Нет авторизации',
+};
+
+function humanizeReason(reason: string | undefined): string {
+  if (!reason) return 'Отклонено';
+  return REASON_LABELS[reason] ?? reason;
+}
+
 function foldEffects(effects: EffectRow[]): Record<string, Record<string, Record<string, unknown>>> {
   const world: Record<string, Record<string, Record<string, unknown>>> = {};
   for (const e of effects) {
@@ -144,6 +176,19 @@ export function TenantApp() {
   const [activeProjectionId, setActiveProjectionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewer] = useState({ id: 'tenant-viewer', name: 'Tenant', role: 'owner' });
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const pushToast = useCallback((t: Omit<Toast, 'id'>) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setToasts((prev) => [...prev, { ...t, id }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((x) => x.id !== id));
+    }, 6000);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((x) => x.id !== id));
+  }, []);
 
   const refreshEffects = useCallback(async () => {
     try {
@@ -270,7 +315,11 @@ export function TenantApp() {
       const INTENTS = (nested?.INTENTS ?? {}) as Record<string, unknown>;
       const effects = buildEffectsFromIntent(intentId, ctx, INTENTS, viewer);
       if (effects.length === 0) {
-        console.warn(`exec: intent "${intentId}" не дал effect'ов (возможно, replace без value)`);
+        pushToast({
+          kind: 'warn',
+          title: `Intent «${intentId}» не сформировал effect`,
+          details: 'Возможно, replace без value или неизвестный α. Проверьте онтологию.',
+        });
         return;
       }
       for (const effect of effects) {
@@ -282,21 +331,38 @@ export function TenantApp() {
             body: JSON.stringify(effect),
           });
           if (res.status === 401 || res.status === 403) {
-            console.warn('auth required для /api/effects — эффект не применён');
+            pushToast({
+              kind: 'error',
+              title: 'Требуется авторизация',
+              details: 'JWT cookie отсутствует или membership не выдан. Залогиньтесь повторно.',
+            });
             return;
           }
           if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            console.warn('effect rejected:', err);
+            const err = (await res.json().catch(() => ({}))) as {
+              reason?: string;
+              details?: string;
+              error?: string;
+            };
+            const reason = err.reason ?? err.error;
+            pushToast({
+              kind: 'error',
+              title: `Отклонено: ${humanizeReason(reason)}`,
+              details: err.details,
+            });
             continue;
           }
         } catch (e) {
-          console.warn('exec failed:', e);
+          pushToast({
+            kind: 'error',
+            title: 'Сетевая ошибка',
+            details: e instanceof Error ? e.message : String(e),
+          });
         }
       }
       await refreshEffects();
     },
-    [nested, viewer, refreshEffects],
+    [nested, viewer, refreshEffects, pushToast],
   );
 
   // Rules of Hooks: все useCallback до early-return веток. Иначе React error #310
@@ -444,8 +510,65 @@ export function TenantApp() {
               </main>
             </div>
         )}
+        <ToastStack toasts={toasts} onDismiss={dismissToast} />
       </div>
     </AntdAdapterProvider>
+  );
+}
+
+function ToastStack({
+  toasts,
+  onDismiss,
+}: {
+  toasts: Toast[];
+  onDismiss: (id: string) => void;
+}) {
+  if (toasts.length === 0) return null;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 24,
+        right: 24,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        zIndex: 1000,
+        maxWidth: 420,
+      }}
+    >
+      {toasts.map((t) => {
+        const borderColor =
+          t.kind === 'error' ? '#dc2626' : t.kind === 'warn' ? '#d97706' : '#1677ff';
+        return (
+          <div
+            key={t.id}
+            onClick={() => onDismiss(t.id)}
+            style={{
+              padding: '12px 14px',
+              background: '#fff',
+              border: `1px solid ${borderColor}`,
+              borderLeft: `4px solid ${borderColor}`,
+              borderRadius: 4,
+              boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
+              cursor: 'pointer',
+              fontFamily: 'Inter, system-ui, sans-serif',
+              fontSize: 13,
+              color: '#111',
+              lineHeight: 1.45,
+            }}
+            title="Click to dismiss"
+          >
+            <div style={{ fontWeight: 600, marginBottom: t.details ? 4 : 0 }}>{t.title}</div>
+            {t.details && (
+              <div style={{ color: '#6b7280', fontSize: 12, fontFamily: 'JetBrains Mono, monospace' }}>
+                {t.details}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
