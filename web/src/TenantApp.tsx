@@ -198,19 +198,61 @@ function humanizeReason(reason: string | undefined): string {
   return REASON_LABELS[reason] ?? reason;
 }
 
-function foldEffects(effects: EffectRow[]): Record<string, Record<string, Record<string, unknown>>> {
-  const world: Record<string, Record<string, Record<string, unknown>>> = {};
+/**
+ * SDK's `assignToSlotsCatalog.pluralizeLower` — должно 1-в-1 совпадать,
+ * иначе world[source] не матчится. Копия чтобы не тянуть core.
+ */
+function pluralizeLower(entity: string): string {
+  const lower = entity.toLowerCase();
+  if (lower.endsWith('y')) return lower.slice(0, -1) + 'ies';
+  if (lower.endsWith('s')) return lower + 'es';
+  return lower + 's';
+}
+
+/** CamelCase plural для filterWorld legacy: OrderItem → orderItems. */
+function camelPluralize(entity: string): string {
+  if (!entity) return entity;
+  const head = entity[0].toLowerCase() + entity.slice(1);
+  if (head.endsWith('y')) return head.slice(0, -1) + 'ies';
+  if (head.endsWith('s')) return head + 'es';
+  return head + 's';
+}
+
+/**
+ * Сворачивает Φ-trail в world. Три shape'а одновременно — чтобы SDK-
+ * внутренние lookups все попадали:
+ *   - `world.genres`   — plural-lower, ARRAY (DataGrid `ctx.world[node.source]`)
+ *   - `world.orderItems` — camel-plural, ARRAY (filterWorld camelPluralize)
+ *   - `world.Genre`    — CapitalCase, ARRAY (legacy dotted-witness fallback)
+ *
+ * До fix'а возвращали только `{Entity: {id: row}}` — SDK'шный DataGrid
+ * ждёт массив, получал object → `Array.isArray` false → items=[] →
+ * catalog рендерится пустым несмотря на записи в Φ. (shop: 16 Genre
+ * visible в /api/effects, UI показывает «пусто».)
+ */
+function foldEffects(effects: EffectRow[]): Record<string, unknown> {
+  const byEntity: Record<string, Record<string, Record<string, unknown>>> = {};
   for (const e of effects) {
     const id = e.fields?.id as string | undefined;
     if (!id) continue;
-    if (!world[e.entity]) world[e.entity] = {};
+    if (!byEntity[e.entity]) byEntity[e.entity] = {};
     if (e.alpha === 'create') {
-      world[e.entity][id] = { ...e.fields };
+      byEntity[e.entity][id] = { ...e.fields };
     } else if (e.alpha === 'replace') {
-      world[e.entity][id] = { ...(world[e.entity][id] ?? {}), ...e.fields };
+      byEntity[e.entity][id] = { ...(byEntity[e.entity][id] ?? {}), ...e.fields };
     } else if (e.alpha === 'remove') {
-      delete world[e.entity][id];
+      delete byEntity[e.entity][id];
     }
+  }
+  const world: Record<string, unknown> = {};
+  for (const [entity, rowsById] of Object.entries(byEntity)) {
+    const rows = Object.values(rowsById);
+    const plural = pluralizeLower(entity);
+    const camel = camelPluralize(entity);
+    world[plural] = rows;
+    if (camel !== plural) world[camel] = rows;
+    // Сохраняем CapitalCase для legacy eval — dotted witnesses `Entity[id]`.
+    world[entity] = rows;
   }
   return world;
 }
@@ -295,7 +337,7 @@ export function TenantApp() {
       mergedProjections: {} as Record<string, any>,
       artifacts: {} as Record<string, any>,
       rootProjectionIds: [] as string[],
-      world: {} as Record<string, Record<string, Record<string, unknown>>>,
+      world: {} as Record<string, unknown>,
       domainId: 'tenant',
       description: undefined as string | undefined,
       isEmpty: true,
