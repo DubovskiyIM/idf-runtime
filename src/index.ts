@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { loadEnv } from './env.js';
 import { logger } from './logger.js';
 import { applyMigrations } from './phi/migrate.js';
+import { applyRenames } from './phi/renames.js';
 import { createPhiStore } from './phi/store.js';
 import { readDomain } from './domain/loader.js';
 import { createRevocationCache } from './viewer/revocation-cache.js';
@@ -32,6 +33,19 @@ const store = createPhiStore(db);
 
 let currentDomain: any =
   readDomain(env.DATA_DIR)?.json ?? { entities: {}, intents: {}, roles: {}, projections: {} };
+
+// Apply domain.renames к phi.db (UPDATE entity / fields_json). Идемпотентно
+// через applied_renames tracking — повторный startup с тем же списком
+// renames no-op. Новые entries из деплоев — применятся только раз.
+{
+  const result = applyRenames(db, currentDomain.renames);
+  if (result.applied > 0) {
+    logger.info(
+      { appliedRenames: result.applied, effectsUpdated: result.effectsUpdated },
+      'renames applied on startup',
+    );
+  }
+}
 
 const revCache = createRevocationCache(db);
 startRevocationPuller({
@@ -82,6 +96,13 @@ app.use(
     store,
     onAccept: (d) => {
       currentDomain = d;
+      const r = applyRenames(db, d.renames);
+      if (r.applied > 0) {
+        logger.info(
+          { appliedRenames: r.applied, effectsUpdated: r.effectsUpdated },
+          'renames applied on reload',
+        );
+      }
     },
   })
 );

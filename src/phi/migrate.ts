@@ -63,5 +63,19 @@ export function applyMigrations(db: Database.Database): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    -- Tracking применённых renames из domain.renames[]. Apply идемпотентен:
+    -- перед UPDATE phi_effects.entity проверяем есть ли уже запись в
+    -- applied_renames. Это важно т.к. domain.renames — append-only журнал,
+    -- runtime reload происходит много раз после одного изменения.
+    CREATE TABLE IF NOT EXISTS applied_renames (
+      rename_key TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      from_name TEXT NOT NULL,
+      to_name TEXT NOT NULL,
+      entity TEXT,
+      applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      effects_updated INTEGER NOT NULL DEFAULT 0
+    );
   `);
 }
