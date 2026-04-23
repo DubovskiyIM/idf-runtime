@@ -370,8 +370,37 @@ export function TenantApp() {
       console.warn('crystallizeV2 failed:', e);
     }
 
-    // Root projections = artifact'ы не absorbedBy другим (R8 hub-absorption).
-    const rootIds = Object.keys(artifactsMap).filter((pid) => !artifactsMap[pid]?.absorbedBy);
+    // Root projections: правильный nav-set для shell'а.
+    //
+    // До fix'а был только фильтр по absorbedBy — это пускало в top-nav:
+    //  - form-архетипы (book_create etc) — должны быть CTA на catalog'е
+    //  - detail-архетипы non-singleton (book_detail, order_detail) — открываются
+    //    через item-click из catalog'а, сами по себе в nav дают hub-view
+    //    без выбранного элемента («Пусто» справа)
+    //  - при этом absorbed catalog'и (order_list absorbedBy=book_detail)
+    //    полностью терялись, т.к. их absorber был скрыт и detail тоже
+    //
+    // Правильный фильтр:
+    //  1. form — всегда hide
+    //  2. detail non-singleton — hide (singleton-detail типа my_wallet оставляем)
+    //  3. absorbedBy — если absorber visible (catalog), hide; если absorber
+    //     сам скрыт (detail/form) → promote (absorbed catalog становится root)
+    const isHiddenFromNav = (a: any): boolean => {
+      if (!a) return true;
+      if (a.archetype === 'form') return true;
+      if (a.archetype === 'detail' && !a.singleton) return true;
+      return false;
+    };
+    const rootIds = Object.keys(artifactsMap).filter((pid) => {
+      const a = artifactsMap[pid];
+      if (isHiddenFromNav(a)) return false;
+      if (a?.absorbedBy) {
+        const absorber = artifactsMap[a.absorbedBy];
+        if (absorber && !isHiddenFromNav(absorber)) return false; // absorbed в visible hub
+        // absorber скрыт → promote (иначе catalog вообще никак не достанешь)
+      }
+      return true;
+    });
 
     const entitiesCount = Object.keys(n.ONTOLOGY.entities ?? {}).length;
     const intentsCount = Object.keys(n.INTENTS ?? {}).length;
@@ -590,7 +619,15 @@ export function TenantApp() {
                   const proj = mergedProjections[pid];
                   const art = artifacts[pid];
                   const isActive = pid === activeProjectionId;
-                  const label = proj?.name ?? art?.title ?? humanizeId(pid);
+                  // Приоритет: authored name → artifact title → mainEntity
+                  // (CapitalCase) → humanized pid. До fix'а humanizeId давал
+                  // lowercase «book» для book_list и book_detail одновременно
+                  // — дубли в sidebar было не отличить.
+                  const label =
+                    proj?.name ??
+                    art?.title ??
+                    (art?.mainEntity as string | undefined) ??
+                    humanizeId(pid);
                   return (
                     <button
                       key={pid}
