@@ -137,6 +137,7 @@ runtime держит ~400 LOC «помощников» поверх SDK — post
 - **Target:** `@intent-driven/core/patterns/stable/catalog/phase-aware-primary-cta` — promote в stable с `structure.apply`.
 - **Unblocks removal:** pattern автоматически ставит conditions на inject'ируемые phase-transitions.
 - **Scope:** S (1 день) — pattern уже в candidate, нужно добавить apply и tests.
+- **⚠️ Known limitation:** shim смотрит только **target value** (`!= 'paid'`). **Authored precondition** (например «pay_order только когда status='pending'») не респектится. Кейс: customer видит «Оплатить» на заказе со `status='processing'` — target != paid, shim пропустил. Правильное решение — парсить intent.precondition / invariant.kind:"transition". Полностью чинится только SDK-level в phase-aware-primary-cta.apply.
 
 ### 12. Replace `item.intents` целиком (drop SDK-generated noise)
 
@@ -158,6 +159,21 @@ runtime держит ~400 LOC «помощников» поверх SDK — post
   <RendererBoundary><ProjectionRendererV2 ... /></RendererBoundary>
   ```
 - **Scope:** XS (полдня).
+
+### 15. Authored precondition на intent (не только target value)
+
+- **Symptom:** customer видит «Оплатить» на Order со `status='processing'`. Спека pay_order имеет explicit precondition «status=pending», но runtime не смотрит precondition — только target value (см. shim #11).
+- **Shim:** **нет** — известный недостаток shim'а #11. Authored precondition игнорируется.
+- **Runtime PR:** — (не реализован)
+- **Target:** `@intent-driven/core` — читать одно из:
+  - `intent.precondition: "Entity.field = 'value'"` — предложенное поле
+  - `intent.particles.guards: [...]` — canonical?
+  - `ontology.invariants[{kind:"transition", from:..., to:...}]` — уже существует в 6 invariant kinds
+  
+  Конвенция через transition-invariants самая правильная — автор декларирует state-machine, pattern автоматически выводит applicable intents для каждого состояния.
+- **Unblocks removal:** SDK читает transition-invariants + generates conditions для phase-aware-primary-cta. Host shim становится лишним.
+- **Scope:** M (3-5 дней) — проектирование transition-invariant API + integration в crystallize patterns.
+- **Workaround до SDK-фикса:** author указывает target value в `particles.effects.fields` И **убирает** intent из canExecute'а ролей которые не должны его видеть в неправильных состояниях. Грубо но работает.
 
 ### 14. `<NoProjections>` diagnostic panel
 
@@ -194,7 +210,7 @@ runtime держит ~400 LOC «помощников» поверх SDK — post
 
 ## Метрика здоровья
 
-- **Активных shim'ов:** 14
+- **Активных shim'ов:** 14 + 1 «нет shim'а, нужен SDK» (#15)
 - **Строк кода в shim'ах:** ~400 LOC в TenantApp.tsx + ~40 в buildEffects.ts
 - **Целевой state:** 0 активных shim'ов (runtime = thin wrapper над SDK + server + JWT forwarding)
 - **Когда считать SDK готовым для public API:** ≤3 активных shim'а (domain-specific полировка)
