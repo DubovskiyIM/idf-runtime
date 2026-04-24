@@ -313,7 +313,13 @@ function augmentCatalogRowIntents(
     const entityLower = mainEntity[0].toLowerCase() + mainEntity.slice(1);
     const ownIdParam = `${entityLower}Id`;
 
-    const perRow: Array<{ intentId: string; label: string; icon: string; danger: boolean; conditions: unknown[] }> = [];
+    const perRow: Array<{
+      intentId: string;
+      label: string;
+      icon: string;
+      danger: boolean;
+      conditions: string[];
+    }> = [];
     for (const [iid, intent] of Object.entries(INTENTS)) {
       const α = (intent?.α ?? intent?.alpha) as string | undefined;
       const target = (intent?.target ?? '') as string;
@@ -340,12 +346,34 @@ function augmentCatalogRowIntents(
       );
       if (otherEntityParams.length > 0) continue;
 
+      // Phase-aware условие для replace-intent'а: если intent переводит
+      // entity.field в value V, скрываем intent когда row[field] === V
+      // (нет смысла переводить в текущее состояние — e.g. 'Оплатить'
+      // пропадает когда status='paid'). Извлекаем field+value из
+      // target ('Order.status') и particles.effects[0].fields.<field>.
+      const conditions: string[] = [];
+      if (isReplaceThisField) {
+        const dotIdx = target.indexOf('.');
+        const fieldName = dotIdx >= 0 ? target.slice(dotIdx + 1) : null;
+        const effects = (intent?.particles?.effects ?? []) as Array<{
+          α?: string;
+          fields?: Record<string, unknown>;
+        }>;
+        const replaceEffect = effects.find((e) => (e?.α ?? '') === 'replace' || !e?.α);
+        const fieldValue = fieldName && replaceEffect?.fields
+          ? replaceEffect.fields[fieldName]
+          : undefined;
+        if (fieldName && typeof fieldValue === 'string') {
+          conditions.push(`${mainEntity}.${fieldName} != '${fieldValue}'`);
+        }
+      }
+
       perRow.push({
         intentId: iid,
         label: (intent?.name as string | undefined) ?? iid,
         icon: isRemoveThis ? '🗑' : '⚡',
         danger: isRemoveThis,
-        conditions: [],
+        conditions,
       });
     }
 
