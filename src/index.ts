@@ -18,6 +18,8 @@ import { createAuditRouter } from './admin/audit.js';
 import { createAdminHealthRouter } from './admin/health.js';
 import { createSnapshotRouter } from './admin/snapshot.js';
 import { createSeedRouter } from './admin/seed.js';
+import { createAdminSignalsRouter } from './admin/signals.js';
+import { SignalFeeder } from './ml/signalFeeder.js';
 import { createS3Client } from './s3/client.js';
 import { startBackupCron } from './cron/s3-backup.js';
 import { createVoiceRouter } from './routes/voice.js';
@@ -35,6 +37,22 @@ const store = createPhiStore(db);
 
 let currentDomain: any =
   readDomain(env.DATA_DIR)?.json ?? { entities: {}, intents: {}, roles: {}, projections: {} };
+
+let signalFeeder: SignalFeeder | null = null;
+function syncSignalFeeder(domain: any): void {
+  const script = domain?.ontology?.signalScript ?? [];
+  if (signalFeeder) {
+    signalFeeder.stop();
+    signalFeeder = null;
+  }
+  if (Array.isArray(script) && script.length > 0) {
+    signalFeeder = new SignalFeeder({
+      script,
+      onEffect: (e) => store.append(e as any),
+    });
+  }
+}
+syncSignalFeeder(currentDomain);
 
 // Apply domain.renames к phi.db (UPDATE entity / fields_json). Идемпотентно
 // через applied_renames tracking — повторный startup с тем же списком
@@ -105,11 +123,18 @@ app.use(
           'renames applied on reload',
         );
       }
+      syncSignalFeeder(d);
     },
   })
 );
 app.use(createAuditRouter({ store, secret: env.TENANT_HMAC_SECRET }));
 app.use(createSeedRouter({ store, secret: env.TENANT_HMAC_SECRET }));
+app.use(
+  createAdminSignalsRouter({
+    getFeeder: () => signalFeeder,
+    secret: env.TENANT_HMAC_SECRET,
+  }),
+);
 app.use(createAdminHealthRouter({ store, secret: env.TENANT_HMAC_SECRET }));
 app.use(
   createSnapshotRouter({
@@ -154,6 +179,8 @@ withViewer.use(
     getDomain: () => currentDomain,
     getWorld,
     getStore: () => store,
+    onAgentTurnStart: () => signalFeeder?.stop(),
+    onAgentTurnEnd: () => signalFeeder?.start(),
   }),
 );
 withViewer.use(
