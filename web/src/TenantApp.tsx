@@ -387,6 +387,45 @@ function augmentCatalogRowIntents(
   return out;
 }
 
+/**
+ * Disable SDK-паттерны на уровне projection.patterns.disabled до
+ * crystallize. SDK crystallize_v2/applyStructuralPatterns уважает этот
+ * opt-out: pattern не запускает свой structure.apply даже если trigger
+ * matched. Чище чем post-crystallize strip — artifact вообще не получает
+ * мусорные slots.
+ *
+ * hierarchy-tree-nav auto-apply'ится на catalog'и с sub-entities через FK
+ * (shop: Genre→Book→CartItem). MVP runtime renderer рисует treeNav
+ * отдельным блоком рядом с list'ом — визуальный шум без функции.
+ * Вернуть когда SDK renderer TreeNav будет кликабельным nav'ом.
+ */
+const GLOBALLY_DISABLED_PATTERNS = ['hierarchy-tree-nav'];
+
+function disableRuntimePatterns(
+  projections: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [pid, proj] of Object.entries(projections)) {
+    if (!proj || typeof proj !== 'object') {
+      out[pid] = proj;
+      continue;
+    }
+    const p = proj as { patterns?: { disabled?: string[]; enabled?: string[] } };
+    const existingDisabled = p.patterns?.disabled ?? [];
+    const mergedDisabled = Array.from(
+      new Set([...existingDisabled, ...GLOBALLY_DISABLED_PATTERNS]),
+    );
+    out[pid] = {
+      ...(proj as Record<string, unknown>),
+      patterns: {
+        ...(p.patterns ?? {}),
+        disabled: mergedDisabled,
+      },
+    };
+  }
+  return out;
+}
+
 function humanizeReason(reason: string | undefined): string {
   if (!reason) return 'Отклонено';
   return REASON_LABELS[reason] ?? reason;
@@ -615,10 +654,14 @@ export function TenantApp() {
       merged[id] = merged[id] ? { ...merged[id], ...(authored as any) } : authored;
     }
 
+    // Disable runtime-incompatible SDK patterns через projection.patterns.disabled.
+    // crystallizeV2 respects opt-out и не запускает их structure.apply.
+    const mergedWithPrefs = disableRuntimePatterns(merged);
+
     // crystallizeV2 signature: (INTENTS, PROJECTIONS, ONTOLOGY, domainId, opts)
     let artifactsMap: Record<string, any> = {};
     try {
-      artifactsMap = crystallizeV2(INTENTS, merged, n.ONTOLOGY, n.meta.id) ?? {};
+      artifactsMap = crystallizeV2(INTENTS, mergedWithPrefs, n.ONTOLOGY, n.meta.id) ?? {};
     } catch (e) {
       console.warn('crystallizeV2 failed:', e);
     }
