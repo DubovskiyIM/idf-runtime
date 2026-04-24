@@ -193,6 +193,90 @@ describe('POST /api/agent/:slug/exec', () => {
     expect(res.status).toBe(400);
   });
 
+  it('accepts host-format particles {α, target, fields} (sales-crm compat)', async () => {
+    const hostFormatDomain: any = {
+      ...minimalDomain,
+      intents: {
+        buy_asset: {
+          id: 'buy_asset',
+          forRoles: ['agent'],
+          parameters: {
+            assetId: { type: 'string' },
+            assetType: { type: 'string' },
+            total: { type: 'number' },
+          },
+          particles: {
+            effects: [
+              {
+                α: 'add',
+                target: 'Transaction',
+                fields: {
+                  id: '{{auto}}',
+                  assetId: '{{params.assetId}}',
+                  assetType: '{{params.assetType}}',
+                  total: '{{params.total}}',
+                  userId: '{{viewer.id}}',
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const res = await request(buildApp(store, hostFormatDomain))
+      .post('/api/agent/invest/exec')
+      .send({
+        intentId: 'buy_asset',
+        params: { assetId: 'a-1', assetType: 'stock', total: 5000 },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const confirmed = store.all().filter((e: any) => e.entity === 'Transaction');
+    expect(confirmed).toHaveLength(1);
+    expect(confirmed[0].alpha).toBe('create');
+  });
+
+  it('accepts host-format "target: Entity.field" (replace-kind)', async () => {
+    const domain: any = {
+      ...minimalDomain,
+      intents: {
+        qualify_lead: {
+          id: 'qualify_lead',
+          forRoles: ['agent'],
+          parameters: { leadId: { type: 'string' } },
+          particles: {
+            effects: [
+              {
+                α: 'replace',
+                target: 'Lead.status',
+                fields: { id: '{{params.leadId}}', status: 'qualified' },
+              },
+            ],
+          },
+        },
+      },
+      roles: {
+        agent: {
+          canExecute: ['qualify_lead'],
+          preapproval: {
+            entity: 'AgentPreapproval',
+            ownerField: 'userId',
+            requiredFor: [],
+            checks: [],
+          },
+        },
+      },
+    };
+    const res = await request(buildApp(store, domain))
+      .post('/api/agent/invest/exec')
+      .send({ intentId: 'qualify_lead', params: { leadId: 'lead-1' } });
+    expect(res.status).toBe(200);
+    const leads = store.all().filter((e: any) => e.entity === 'Lead');
+    expect(leads).toHaveLength(1);
+    expect(leads[0].alpha).toBe('replace');
+    expect(leads[0].fields.status).toBe('qualified');
+  });
+
   it('derived rule effect appended after valid exec', async () => {
     const domainWithRule: any = {
       ...minimalDomain,
