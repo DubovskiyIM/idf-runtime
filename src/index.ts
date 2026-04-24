@@ -149,7 +149,13 @@ const getWorld = (_viewer: any) => {
 withViewer.use(createViewerInfoRouter());
 withViewer.use(createVoiceRouter({ getDomain: () => currentDomain, getWorld }));
 withViewer.use(createDocumentRouter({ getDomain: () => currentDomain, getWorld }));
-withViewer.use(createAgentRouter({ getDomain: () => currentDomain, getWorld }));
+withViewer.use(
+  createAgentRouter({
+    getDomain: () => currentDomain,
+    getWorld,
+    getStore: () => store,
+  }),
+);
 withViewer.use(
   createEffectsRouter({
     store,
