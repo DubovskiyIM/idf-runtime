@@ -5,6 +5,8 @@ import { checkPreapprovalForIntent } from '../validator/preapproval.js';
 import { checkInvariantsForEffect } from '../validator/invariants.js';
 import { evaluateRules } from '../rules/evaluate.js';
 import type { PhiStore, Effect } from '../phi/store.js';
+import { createConsoleTurnHandler, type OrchestratorDeps } from '../agent/orchestrator.js';
+import type { runToolUseLoop as realRunner } from '../agent/claude-tooluse.js';
 
 export type AgentDeps = {
   getDomain: () => any;
@@ -12,6 +14,8 @@ export type AgentDeps = {
   getStore: () => PhiStore;
   onAgentTurnStart?: () => void;
   onAgentTurnEnd?: () => void;
+  /** Override для тестов — заменяет real Claude CLI runner на mock */
+  runToolUseLoop?: typeof realRunner;
 };
 
 export function createAgentRouter(deps: AgentDeps): Router {
@@ -122,6 +126,16 @@ export function createAgentRouter(deps: AgentDeps): Router {
       derived,
     });
   });
+
+  const consoleHandler = createConsoleTurnHandler({
+    getDomain: deps.getDomain,
+    getWorld: deps.getWorld,
+    getStore: deps.getStore,
+    runToolUseLoop: deps.runToolUseLoop,
+    onAgentTurnStart: deps.onAgentTurnStart,
+    onAgentTurnEnd: deps.onAgentTurnEnd,
+  });
+  router.post('/api/agent/:slug/console/turn', consoleHandler);
 
   return router;
 }
