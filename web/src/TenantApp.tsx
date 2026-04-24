@@ -387,6 +387,36 @@ function augmentCatalogRowIntents(
   return out;
 }
 
+/**
+ * Stripпит treeNav-primitive'ы из catalog artifacts.
+ * SDK pattern `hierarchy-tree-nav` авто-inject'ит его в slots.sidebar
+ * когда entity имеет sub-entities через FK. MVP shell рендерит это
+ * как отдельный блок «ИЕРАРХИЯ» что запутывает PM'а — удаляем.
+ */
+function stripHierarchyTreeNav(artifacts: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [pid, art] of Object.entries(artifacts)) {
+    if (art?.archetype !== 'catalog' || !art.slots) {
+      out[pid] = art;
+      continue;
+    }
+    const sidebarNoTree = Array.isArray(art.slots.sidebar)
+      ? art.slots.sidebar.filter(
+          (node: { type?: string }) => node?.type !== 'treeNav',
+        )
+      : art.slots.sidebar;
+    if (sidebarNoTree === art.slots.sidebar) {
+      out[pid] = art;
+      continue;
+    }
+    out[pid] = {
+      ...art,
+      slots: { ...art.slots, sidebar: sidebarNoTree },
+    };
+  }
+  return out;
+}
+
 function humanizeReason(reason: string | undefined): string {
   if (!reason) return 'Отклонено';
   return REASON_LABELS[reason] ?? reason;
@@ -625,6 +655,14 @@ export function TenantApp() {
     // row-contextual-actions-menu ещё candidate в SDK — augment'им руками:
     // inject delete/phase-transition intent'ы в item.intents каждого catalog'а.
     artifactsMap = augmentCatalogRowIntents(artifactsMap, INTENTS);
+
+    // SDK pattern `hierarchy-tree-nav` автоматически добавляет
+    // `slots.sidebar: [{type:"treeNav"}]` к catalog'у, у которого
+    // есть sub-entities через FK. В текущем shell'е это рисуется как
+    // странный «ИЕРАРХИЯ Genre → Book → CartItem» блок рядом с list'ом.
+    // Для MVP stripпим — порт правильного TreeNav requires renderer
+    // работы. PM видел хаос, не помощь.
+    artifactsMap = stripHierarchyTreeNav(artifactsMap);
 
     // Ontology-declared role names — для маппинга JWT-роли PM'а (tenant-owner)
     // на роль, которую renderer поймёт. Если JWT.role нет в ontology.roles,
