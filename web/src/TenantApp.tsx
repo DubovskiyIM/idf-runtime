@@ -302,6 +302,7 @@ const REASON_LABELS: Record<string, string> = {
 function augmentCatalogRowIntents(
   artifacts: Record<string, any>,
   INTENTS: Record<string, any>,
+  viewerCanExecute: Set<string> | null,
 ): Record<string, any> {
   const out: Record<string, any> = {};
   for (const [pid, art] of Object.entries(artifacts)) {
@@ -327,6 +328,11 @@ function augmentCatalogRowIntents(
       const isRemoveThis = α === 'remove' && target === mainEntity;
       const isReplaceThisField = α === 'replace' && target.startsWith(mainEntity + '.');
       if (!isRemoveThis && !isReplaceThisField) continue;
+
+      // Role-based filter: если viewer's роль объявлена и canExecute не
+      // содержит этот intent — скрываем. null означает bypass-mode
+      // (tenant-owner / roles.canExecute не объявлен).
+      if (viewerCanExecute && !viewerCanExecute.has(iid)) continue;
 
       const params = (intent?.parameters ?? []) as Array<{ name?: string; entity?: string; ref?: string }>;
       const hasOwnId = params.some(
@@ -377,23 +383,22 @@ function augmentCatalogRowIntents(
       });
     }
 
-    if (perRow.length === 0) {
-      out[pid] = art;
-      continue;
-    }
+    // Заменяем item.intents целиком, а не мерджим с existing:
+    // SDK patterns (catalog-creator-toolbar и др.) накидывают в
+    // item.intents всякий noise (read-intents типа list_genres /
+    // list_orders, которые в row-меню выглядят как "Заказы" — навигация
+    // не должна жить на row). Host делает явное решение: role-filtered
+    // remove/replace — и только их.
+    const existingAuthored = (art.slots?.body?.item?.intents ?? []) as Array<{
+      intentId?: string;
+      authored?: boolean;
+    }>;
+    // Сохраняем ТОЛЬКО intent'ы с explicit authored=true (author-override).
+    // SDK-generated без этого флага — дропаем.
+    const authoredPreserved = existingAuthored.filter((i) => i?.authored === true);
 
-    const existing = (art.slots?.body?.item?.intents ?? []) as Array<{ intentId?: string }>;
-    const existingIds = new Set(existing.map((i) => i?.intentId).filter(Boolean) as string[]);
-    // Выкидываем read-intent'ы которые SDK зачем-то попадают в item.intents —
-    // они не имеют смысла per-row (уже открыты на уровне catalog'а).
-    const filteredExisting = existing.filter((i) => {
-      const existingIntent = INTENTS[i?.intentId ?? ''];
-      const α = existingIntent?.α ?? existingIntent?.alpha;
-      return α && α !== 'read';
-    });
-    const fresh = perRow.filter((p) => !existingIds.has(p.intentId));
-    const merged = [...filteredExisting, ...fresh];
-    if (merged.length === filteredExisting.length) {
+    const finalIntents = [...authoredPreserved, ...perRow];
+    if (finalIntents.length === 0 && existingAuthored.length === 0) {
       out[pid] = art;
       continue;
     }
@@ -406,7 +411,7 @@ function augmentCatalogRowIntents(
           ...art.slots.body,
           item: {
             ...(art.slots?.body?.item ?? {}),
-            intents: merged,
+            intents: finalIntents,
           },
         },
       },
@@ -680,9 +685,32 @@ export function TenantApp() {
     } catch (e) {
       console.warn('crystallizeV2 failed:', e);
     }
+    // Role-based filter для row-level intents. JWT.role → ontology.roles[role]
+    // fallback на admin-base (см. effectiveRole useMemo ниже). viewerCanExecute
+    // — whitelist для intent'ов которые текущий viewer может запустить из
+    // row-menu. null → bypass (роли не объявлены или tenant-owner без match'а).
+    const ontologyRolesMap = (n.ONTOLOGY.roles ?? {}) as Record<
+      string,
+      { base?: string; canExecute?: string[] | '*' }
+    >;
+    const declaredRoleNames = Object.keys(ontologyRolesMap);
+    let effectiveRoleForFilter: string | null = declaredRoleNames.includes(viewer.role)
+      ? viewer.role
+      : null;
+    if (effectiveRoleForFilter === null && declaredRoleNames.length > 0) {
+      effectiveRoleForFilter =
+        declaredRoleNames.find((r) => ontologyRolesMap[r]?.base === 'admin') ??
+        declaredRoleNames[0];
+    }
+    const roleDef = effectiveRoleForFilter ? ontologyRolesMap[effectiveRoleForFilter] : null;
+    const canExec = roleDef?.canExecute;
+    // canExecute '*' или отсутствует → bypass (null = no filter).
+    const viewerCanExecute: Set<string> | null =
+      canExec === '*' || !Array.isArray(canExec) ? null : new Set(canExec);
+
     // row-contextual-actions-menu ещё candidate в SDK — augment'им руками:
     // inject delete/phase-transition intent'ы в item.intents каждого catalog'а.
-    artifactsMap = augmentCatalogRowIntents(artifactsMap, INTENTS);
+    artifactsMap = augmentCatalogRowIntents(artifactsMap, INTENTS, viewerCanExecute);
 
     // SDK pattern `hierarchy-tree-nav` автоматически добавляет
     // `slots.sidebar: [{type:"treeNav"}]` к catalog'у, у которого
@@ -769,7 +797,7 @@ export function TenantApp() {
       },
       ontologyRoles,
     };
-  }, [domain, effects]);
+  }, [domain, effects, viewer.role]);
 
   // JWT role → ontology-declared role (tenant-owner маппим в admin-base).
   // Нужно чтобы SDK filterWorldForRole / renderer visibility видели знакомую
