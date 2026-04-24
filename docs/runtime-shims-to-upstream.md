@@ -33,6 +33,8 @@ runtime держит ~400 LOC «помощников» поверх SDK — post
 
 ## Активные shim'ы (2026-04-24)
 
+> Последний апдейт 2026-04-24: SDK #287 закрыл item #11. Активных shim'ов: 13.
+
 ### 1. `foldEffects` → plural-lower Array world shape
 
 - **Symptom:** catalog показывает пустой список при непустом Φ. SDK `DataGrid.resolveItems` ищет `ctx.world["genres"]` как Array, получает `{Genre: {uuid: row}}` Object → `Array.isArray === false` → `items=[]`.
@@ -129,14 +131,12 @@ runtime держит ~400 LOC «помощников» поверх SDK — post
 - **Unblocks removal:** SDK provides role-aware intent filter. Applies везде (row-menu, catalog-toolbar, form CTAs).
 - **Scope:** S (1-2 дня) — thin helper поверх существующего filterWorldForRole подхода.
 
-### 11. Phase-aware conditions в row-intents
+### 11. ~~Phase-aware conditions в row-intents~~ ✅ RESOLVED 2026-04-24
 
 - **Symptom:** в Order row со `status:"paid"` показывается `pay_order` (no-op re-pay).
-- **Shim:** в `augmentCatalogRowIntents` при inject'е replace-intent'а добавляется `conditions: ["Entity.field != 'target_value'"]`. target_value из `intent.particles.effects[0].fields.<field>`.
-- **Runtime PR:** [#38](https://github.com/DubovskiyIM/idf-runtime/pull/38)
-- **Target:** `@intent-driven/core/patterns/stable/catalog/phase-aware-primary-cta` — promote в stable с `structure.apply`.
-- **Unblocks removal:** pattern автоматически ставит conditions на inject'ируемые phase-transitions.
-- **Scope:** S (1 день) — pattern уже в candidate, нужно добавить apply и tests.
+- **Resolution:** SDK [idf-sdk#287](https://github.com/DubovskiyIM/idf-sdk/pull/287) — `normalizeIntentNative` компилирует `intent.precondition: { "Entity.field": [values] }` → `particles.conditions: ["Entity.field = 'v'"]`. `buildItemConditions` в SDK уже подхватывает `particles.conditions` для row-menu filter'а.
+- **Runtime PR closing:** [#43](https://github.com/DubovskiyIM/idf-runtime/pull/43) — заменил derivation из `effect.fields` на pass-through `intent.particles.conditions`.
+- **Author migration:** каждый phase-transition обязан декларировать `precondition` (из каких source-value можно перейти). Пример: `"qualify_deal": { "α": "replace", "target": "Deal.stage", "precondition": { "Deal.stage": ["prospect"] }, ... }`. Studio prompt обновлён (idf-studio — добавлен раздел в `intents.md`), seed `sales-crm.json` — все phase-transitions декларируют precondition.
 
 ### 12. Replace `item.intents` целиком (drop SDK-generated noise)
 
@@ -194,8 +194,8 @@ runtime держит ~400 LOC «помощников» поверх SDK — post
 
 ## Метрика здоровья
 
-- **Активных shim'ов:** 14
-- **Строк кода в shim'ах:** ~400 LOC в TenantApp.tsx + ~40 в buildEffects.ts
+- **Активных shim'ов:** 13 (было 14 до SDK #287)
+- **Строк кода в shim'ах:** ~385 LOC в TenantApp.tsx + ~40 в buildEffects.ts
 - **Целевой state:** 0 активных shim'ов (runtime = thin wrapper над SDK + server + JWT forwarding)
 - **Когда считать SDK готовым для public API:** ≤3 активных shim'а (domain-specific полировка)
 
