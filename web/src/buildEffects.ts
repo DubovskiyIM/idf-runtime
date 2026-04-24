@@ -143,12 +143,32 @@ export function buildEffectsFromIntent(
     // с дефолтами (create_lead → status:"new").
     const srcFields = (src.fields ?? {}) as Record<string, unknown>;
 
+    // SDK renderer (containers.jsx Card / FormModal / ConfirmDialog) передаёт
+    // ctx вида `{id: item.id, entity: item, ...values}` — `entity` здесь это
+    // contextual-marker «какая строка была выбрана», НЕ поле rows_data. Плюс
+    // `<entity>Id` вроде `bookId` может приходить как self-ref routing-ключ
+    // (из delete_book parameters). До fix'а buildEffects копировал весь ctx
+    // в fields, включая `entity` — каждый replace сохранял предыдущую строку
+    // как вложенный object:
+    //   {id, status:"paid", entity: {status:"new", id, ..., entity: {...prev}}}
+    // После N replace получали `entity: {entity: {entity:{...}}}` глубиной N
+    // с квадратичным ростом размера Φ-row. Плюс это ломало integrity-check
+    // на hot-reload (extra-field в fields_json не соответствовал schema).
+    const selfRefIdKey = `${entity[0].toLowerCase()}${entity.slice(1)}Id`;
+    const isReservedCtxKey = (k: string): boolean =>
+      k === 'id' || k === 'entityId' || k === 'entity' || k === selfRefIdKey;
+
     if (α === 'create') {
       const id = typeof ctx.id === 'string' ? ctx.id : randomId(entity);
+      const ctxFields: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(ctx)) {
+        if (isReservedCtxKey(k)) continue;
+        ctxFields[k] = v;
+      }
       out.push({
         alpha: 'create',
         entity,
-        fields: { ...srcFields, id, ...ctx },
+        fields: { ...srcFields, id, ...ctxFields },
         context: actorCtx,
       });
       continue;
@@ -162,8 +182,9 @@ export function buildEffectsFromIntent(
       const dotIdx = (src.target ?? '').indexOf('.');
       const fieldName = dotIdx >= 0 ? (src.target ?? '').slice(dotIdx + 1) : null;
       for (const [k, v] of Object.entries(ctx)) {
-        if (k === 'id' || k === 'entityId') continue;
-        // inline setter передаёт {id, field: value} — включаем всё, что не id
+        if (isReservedCtxKey(k)) continue;
+        // inline setter передаёт {id, field: value} — включаем всё, что не
+        // routing-ключ и не `entity`-marker.
         fields[k] = v;
       }
       // Если dotted target указал поле, а его не оказалось ни в srcFields,
