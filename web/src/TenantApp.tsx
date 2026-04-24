@@ -632,7 +632,46 @@ export function TenantApp() {
     // intents в flat-форме `{α, target, parameters}` без `particles.effects` и
     // `creates`. Без normalize analyzeIntents не находит creators/mutators —
     // результат: rootProjectionIds = [] и NoProjections stub вместо UI.
-    const INTENTS = normalizeIntentsMap(clickFriendlyIntents) as Record<string, any>;
+    const rawINTENTS = normalizeIntentsMap(clickFriendlyIntents) as Record<string, any>;
+
+    // Role-based filter. Рассчитываем viewerCanExecute ДО crystallize'а и
+    // фильтруем INTENTS — без этого customer видит creator-кнопки
+    // («Добавить книгу») даже если add_book не в his canExecute. SDK
+    // crystallize role-agnostic: каждый viewer получает полный artefact
+    // где и kebab-меню, и toolbar creator содержат все intent'ы подряд.
+    // Фильтрация up-front даёт чистый artefact для текущего viewer'а —
+    // SDK сам не сгенерирует create-projection для отфильтрованного intent'а,
+    // и hero/toolbar/row-menu все три становятся role-aware разом.
+    const ontologyRolesMap = (n.ONTOLOGY.roles ?? {}) as Record<
+      string,
+      { base?: string; canExecute?: string[] | '*' }
+    >;
+    const declaredRoleNames = Object.keys(ontologyRolesMap);
+    let effectiveRoleForFilter: string | null = declaredRoleNames.includes(viewer.role)
+      ? viewer.role
+      : null;
+    if (effectiveRoleForFilter === null && declaredRoleNames.length > 0) {
+      effectiveRoleForFilter =
+        declaredRoleNames.find((r) => ontologyRolesMap[r]?.base === 'admin') ??
+        declaredRoleNames[0];
+    }
+    const roleDef = effectiveRoleForFilter ? ontologyRolesMap[effectiveRoleForFilter] : null;
+    const canExec = roleDef?.canExecute;
+    // canExecute '*' или отсутствует → bypass (null = no filter).
+    // base:"admin"/"owner" (без явного canExecute) тоже даёт bypass —
+    // см. ontologyRolesMap[role].base выше.
+    const viewerCanExecute: Set<string> | null =
+      canExec === '*' || !Array.isArray(canExec) ? null : new Set(canExec);
+
+    // Отфильтрованные INTENTS передаём во ВСЕ downstream-функции
+    // (deriveProjections / generateCreate / generateEdit / crystallizeV2).
+    // null — bypass-режим (admin / tenant-owner / canExecute не объявлен).
+    const INTENTS: Record<string, any> =
+      viewerCanExecute === null
+        ? rawINTENTS
+        : Object.fromEntries(
+            Object.entries(rawINTENTS).filter(([id]) => viewerCanExecute.has(id)),
+          );
 
     const derived = (() => {
       try {
@@ -671,31 +710,10 @@ export function TenantApp() {
     } catch (e) {
       console.warn('crystallizeV2 failed:', e);
     }
-    // Role-based filter для row-level intents. JWT.role → ontology.roles[role]
-    // fallback на admin-base (см. effectiveRole useMemo ниже). viewerCanExecute
-    // — whitelist для intent'ов которые текущий viewer может запустить из
-    // row-menu. null → bypass (роли не объявлены или tenant-owner без match'а).
-    const ontologyRolesMap = (n.ONTOLOGY.roles ?? {}) as Record<
-      string,
-      { base?: string; canExecute?: string[] | '*' }
-    >;
-    const declaredRoleNames = Object.keys(ontologyRolesMap);
-    let effectiveRoleForFilter: string | null = declaredRoleNames.includes(viewer.role)
-      ? viewer.role
-      : null;
-    if (effectiveRoleForFilter === null && declaredRoleNames.length > 0) {
-      effectiveRoleForFilter =
-        declaredRoleNames.find((r) => ontologyRolesMap[r]?.base === 'admin') ??
-        declaredRoleNames[0];
-    }
-    const roleDef = effectiveRoleForFilter ? ontologyRolesMap[effectiveRoleForFilter] : null;
-    const canExec = roleDef?.canExecute;
-    // canExecute '*' или отсутствует → bypass (null = no filter).
-    const viewerCanExecute: Set<string> | null =
-      canExec === '*' || !Array.isArray(canExec) ? null : new Set(canExec);
 
     // row-contextual-actions-menu ещё candidate в SDK — augment'им руками:
     // inject delete/phase-transition intent'ы в item.intents каждого catalog'а.
+    // INTENTS уже отфильтрован по canExecute — augment работает с тем же set'ом.
     artifactsMap = augmentCatalogRowIntents(artifactsMap, INTENTS, viewerCanExecute);
 
     // SDK pattern `hierarchy-tree-nav` автоматически добавляет

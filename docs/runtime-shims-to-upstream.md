@@ -122,13 +122,13 @@ runtime держит ~400 LOC «помощников» поверх SDK — post
 - **Unblocks removal:** Renderer `<TreeNav>` рендерится inline в nav-стек с click-to-drill. Shell-integration документирована.
 - **Scope:** M (1 неделя) — renderer-work, adapter capability, adapter-antd delegation.
 
-### 10. `viewerCanExecute` — role-filter в row-menu
+### 10. `viewerCanExecute` — role-filter для INTENTS до crystallize'а
 
-- **Symptom:** staff видит в row-menu `pay_order`, который в canExecute только у customer.
-- **Shim:** `viewerCanExecute: Set<intentId>` из `ontology.roles[effectiveRole].canExecute`. Augment фильтрует inject'ируемые intents по этому whitelist'у.
-- **Runtime PR:** [#39](https://github.com/DubovskiyIM/idf-runtime/pull/39)
+- **Symptom:** customer видит кнопку «Добавить книгу» в catalog'е Book, хотя `add_book` не в `roles.customer.canExecute`. То же для staff — видит `pay_order` который только customer может. SDK crystallize role-agnostic: artefact одинаковый для всех, role-filter — host-side.
+- **Shim:** `viewerCanExecute: Set<intentId>` из `ontology.roles[effectiveRole].canExecute`. Применяется **ДО crystallize/derive**: `INTENTS` фильтруется по whitelist'у, крыстализатор не видит запрещённые для viewer intent'ы — чистый artefact без create-кнопок / row-action'ов.
+- **Runtime PRs:** [#39](https://github.com/DubovskiyIM/idf-runtime/pull/39) (row-menu only), [#44](https://github.com/DubovskiyIM/idf-runtime/pull/44) (extended — pre-crystallize filter для toolbar / hero / overlay).
 - **Target:** `@intent-driven/core` — новый `filterIntentsByRole(INTENTS, ontology, viewer) → Record<id, intent>`. Параллельный `filterWorldForRole`.
-- **Unblocks removal:** SDK provides role-aware intent filter. Applies везде (row-menu, catalog-toolbar, form CTAs).
+- **Unblocks removal:** SDK provides role-aware intent filter. Applies везде (row-menu, catalog-toolbar, form CTAs) — единой pre-step.
 - **Scope:** S (1-2 дня) — thin helper поверх существующего filterWorldForRole подхода.
 
 ### 11. ~~Phase-aware conditions в row-intents~~ ✅ RESOLVED 2026-04-24
