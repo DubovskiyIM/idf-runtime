@@ -248,4 +248,111 @@ describe('buildEffectsFromIntent', () => {
       expect(effects).toHaveLength(0);
     });
   });
+
+  describe('reserved ctx keys (entity marker / self-ref id)', () => {
+    // SDK renderer передаёт ctx вида `{id, entity: item, ...values}` —
+    // `entity` это contextual marker «какая строка была выбрана». До fix'а
+    // buildEffects копировал его в fields → каждый replace-turn генерировал
+    // fields с вложенным `entity: {...prev}`. Через N turn'ов получали
+    // `entity: {entity: {entity: {...}}}` глубиной N.
+    it('replace: ctx.entity НЕ попадает в fields', () => {
+      const INTENTS = {
+        pay_order: {
+          α: 'replace',
+          target: 'Order.status',
+          particles: {
+            effects: [{ target: 'Order.status', op: 'replace', fields: { status: 'paid' } }],
+          },
+        },
+      };
+      const prevRow = { id: 'o-1', status: 'new', title: 'заказ' };
+      const [e] = buildEffectsFromIntent(
+        'pay_order',
+        { id: 'o-1', entity: prevRow },
+        INTENTS,
+        viewer,
+      );
+      expect(e).toBeDefined();
+      expect(e.fields.status).toBe('paid');
+      expect(e.fields).not.toHaveProperty('entity');
+    });
+
+    it('create: ctx.entity НЕ попадает в fields', () => {
+      const INTENTS = { create_book: { α: 'create', target: 'Book' } };
+      const prevRow = { id: 'b-old', title: 'Другая' };
+      const [e] = buildEffectsFromIntent(
+        'create_book',
+        { title: 'Новая', entity: prevRow },
+        INTENTS,
+        viewer,
+      );
+      expect(e.fields.title).toBe('Новая');
+      expect(e.fields).not.toHaveProperty('entity');
+    });
+
+    it('replace: self-ref id ключ (bookId при entity=Book) НЕ попадает в fields', () => {
+      // Shim coerce'ит delete_book в replace-intent с `bookId` в params.
+      // Renderer передаёт `{id: item.id, bookId: item.id}` — самореферент.
+      // Без skip'а fields.bookId = id → каждый replace повторно дублирует
+      // routing-ключ в data.
+      const INTENTS = {
+        update_book: {
+          α: 'replace',
+          target: 'Book',
+          particles: { effects: [{ target: 'Book', op: 'replace' }] },
+        },
+      };
+      const [e] = buildEffectsFromIntent(
+        'update_book',
+        { id: 'b-1', bookId: 'b-1', title: 'Новое' },
+        INTENTS,
+        viewer,
+      );
+      expect(e.fields.id).toBe('b-1');
+      expect(e.fields.title).toBe('Новое');
+      expect(e.fields).not.toHaveProperty('bookId');
+    });
+
+    it('ctx.entityId skip (backward-compat routing)', () => {
+      const INTENTS = {
+        update_order: {
+          α: 'replace',
+          target: 'Order',
+          particles: { effects: [{ target: 'Order', op: 'replace' }] },
+        },
+      };
+      const [e] = buildEffectsFromIntent(
+        'update_order',
+        { entityId: 'o-1', note: 'x' },
+        INTENTS,
+        viewer,
+      );
+      expect(e.fields.id).toBe('o-1');
+      expect(e.fields).not.toHaveProperty('entityId');
+      expect(e.fields.note).toBe('x');
+    });
+
+    it('regression: 3 последовательных replace не накапливают entity-wrap', () => {
+      const INTENTS = {
+        pay_order: {
+          α: 'replace',
+          target: 'Order.status',
+          particles: {
+            effects: [{ target: 'Order.status', op: 'replace', fields: { status: 'paid' } }],
+          },
+        },
+      };
+      let row: Record<string, unknown> = { id: 'o-1', status: 'new' };
+      for (let i = 0; i < 3; i++) {
+        const [e] = buildEffectsFromIntent(
+          'pay_order',
+          { id: 'o-1', entity: row },
+          INTENTS,
+          viewer,
+        );
+        expect(e.fields).not.toHaveProperty('entity');
+        row = { ...e.fields };
+      }
+    });
+  });
 });
