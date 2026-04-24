@@ -39,23 +39,39 @@ type NestedDomain = {
 type MaybeNested = FlatDomain & Partial<NestedDomain>;
 
 /**
- * Очищает entity.fields от null-значений. Studio `mergePatch` мержит
- * patches поверх existing domain — если Claude прислал `{fields: {x: null}}`
- * (намерение удалить) или автосинк снёс поле после revision'а, null кладётся
- * в fields и ломает SDK `detectForeignKeys` (он ждёт object с .type).
- * Deep-clean перед crystallize, аналогично studio preview sanitizeEntities.
+ * Очищает entity.fields от:
+ *  - null-значений (mergePatch оставляет {x:null} при «удалить X» — SDK
+ *    detectForeignKeys ждёт object с .type, null ломает)
+ *  - invalid entityRef — fields с type:"entityRef" без target entity/ref.
+ *    Claude по ошибке создаёт `{bookId: {type:"entityRef"}}` без указания
+ *    куда ссылка. SDK инферит self-ref (по имени поля → Entity), рисует
+ *    странный self-subcollection на detail page. Strip такие fields до
+ *    crystallize.
+ *  - dangling entityRef — ссылка на сущность, которой нет в ontology.
+ *    Тоже приводит к broken subcollections.
  */
 function sanitizeEntities(
   entities: Record<string, unknown>,
 ): Record<string, { fields: Record<string, unknown>; [k: string]: unknown }> {
   const out: Record<string, { fields: Record<string, unknown>; [k: string]: unknown }> = {};
+  const entityNames = new Set(
+    Object.keys(entities ?? {}).filter((k) => entities[k as keyof typeof entities] != null),
+  );
   for (const [name, entity] of Object.entries(entities ?? {})) {
     if (!entity || typeof entity !== 'object') continue;
     const src = entity as { fields?: Record<string, unknown>; [k: string]: unknown };
     const fields: Record<string, unknown> = {};
     for (const [fname, fspec] of Object.entries(src.fields ?? {})) {
-      if (fspec && typeof fspec === 'object') fields[fname] = fspec;
-      // null / undefined / primitives — пропускаем
+      if (!fspec || typeof fspec !== 'object') continue;
+      const fd = fspec as { type?: string; entity?: string; ref?: string };
+      if (fd.type === 'entityRef') {
+        const target = fd.entity ?? fd.ref;
+        // Нет target вообще — skip (Claude забыл/ошибся)
+        if (!target || typeof target !== 'string') continue;
+        // Target не объявлен как entity — skip (dangling ref)
+        if (!entityNames.has(target)) continue;
+      }
+      fields[fname] = fspec;
     }
     out[name] = { ...src, fields };
   }
