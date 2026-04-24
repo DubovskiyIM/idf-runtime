@@ -130,6 +130,79 @@ function normalizeIntentAlphas(
   return { intents: out, coerced };
 }
 
+/**
+ * Coerce remove-intents с одним id-параметром в click-confirm + __irr.
+ *
+ * Симптом до fix'а: клик «Удалить жанр» в row-menu открывал form-modal
+ * с пустым dropdown'ом «выбери жанр» вместо confirm-dialog'а. SDK по
+ * умолчанию ждёт form-overlay если intent.parameters непуст и
+ * intent.confirmation не установлен.
+ *
+ * Для `delete_genre(genreId)` / `delete_book(bookId)` — параметр уже
+ * известен из row.id, форма не нужна. Патчим intent:
+ *   confirmation: "click"
+ *   context.__irr: { point: "high" }  — SDK рисует confirm-dialog
+ *
+ * Параметр резолвится из item.id автоматически в SDK IntentButton
+ * → triggerAction → exec с ctx=row.
+ */
+function coerceSingleIdRemoveToClickConfirm(
+  intents: Record<string, unknown>,
+  ontologyEntities: Record<string, unknown>,
+): Record<string, unknown> {
+  const entityNames = Object.keys(ontologyEntities ?? {});
+  const out: Record<string, unknown> = {};
+  for (const [id, raw] of Object.entries(intents ?? {})) {
+    if (!raw || typeof raw !== 'object') {
+      out[id] = raw;
+      continue;
+    }
+    const r = raw as {
+      α?: string;
+      alpha?: string;
+      target?: string;
+      parameters?: Array<{ name?: string }>;
+      confirmation?: string;
+      context?: Record<string, unknown>;
+    };
+    const α = r.α ?? r.alpha;
+    const target = r.target ?? '';
+    if (α !== 'remove') {
+      out[id] = r;
+      continue;
+    }
+    const mainEntity = target.split('.')[0];
+    if (!entityNames.includes(mainEntity)) {
+      out[id] = r;
+      continue;
+    }
+    const entityLower = mainEntity[0].toLowerCase() + mainEntity.slice(1);
+    const ownIdName = `${entityLower}Id`;
+    const params = r.parameters ?? [];
+    const isSingleOwnId =
+      params.length === 1 &&
+      typeof params[0]?.name === 'string' &&
+      (params[0].name === ownIdName || params[0].name === 'id' || params[0].name === 'entityId');
+    if (!isSingleOwnId) {
+      out[id] = r;
+      continue;
+    }
+    // Не перезаписываем author-заданное confirmation
+    const hasExplicit = typeof r.confirmation === 'string';
+    out[id] = {
+      ...r,
+      confirmation: hasExplicit ? r.confirmation : 'click',
+      context: {
+        ...(r.context ?? {}),
+        __irr:
+          (r.context?.__irr as unknown) ??
+          { point: 'high', reason: 'Удаление не отменить' },
+      },
+    };
+  }
+  return out;
+}
+
 function toNested(raw: MaybeNested): NestedDomain {
   const isNested =
     raw && typeof raw === 'object' &&
@@ -498,11 +571,19 @@ export function TenantApp() {
       );
     }
 
+    // Coerce `remove` intents с одним id-параметром в click-confirm + __irr.
+    // Иначе SDK default: parameters непуст → form-overlay → user видит
+    // пустой dropdown вместо confirm-dialog'а «удалить Роман?».
+    const clickFriendlyIntents = coerceSingleIdRemoveToClickConfirm(
+      canonicalIntents,
+      n.ONTOLOGY.entities as Record<string, unknown>,
+    );
+
     // normalizeIntentsMap обязателен: template'ы / importer-output хранят
     // intents в flat-форме `{α, target, parameters}` без `particles.effects` и
     // `creates`. Без normalize analyzeIntents не находит creators/mutators —
     // результат: rootProjectionIds = [] и NoProjections stub вместо UI.
-    const INTENTS = normalizeIntentsMap(canonicalIntents) as Record<string, any>;
+    const INTENTS = normalizeIntentsMap(clickFriendlyIntents) as Record<string, any>;
 
     const derived = (() => {
       try {
