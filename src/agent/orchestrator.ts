@@ -133,11 +133,14 @@ function execInline(
         });
       }
 
-      const candidates = (intent.particles?.effects ?? []).map((tpl: any) => ({
-        entity: tpl.entity,
-        alpha: tpl.alpha,
-        value: substitute(tpl.value, { params: paramsObj, viewer }),
-      }));
+      const candidates = (intent.particles?.effects ?? []).map((tpl: any) => {
+        const norm = normalizeEffectTemplate(tpl);
+        return {
+          entity: norm.entity,
+          alpha: norm.alpha,
+          value: substitute(norm.value, { params: paramsObj, viewer }),
+        };
+      });
       if (candidates.length === 0) {
         return resolve({ ok: false, reason: 'no_effects_from_intent', intentId });
       }
@@ -239,6 +242,23 @@ function pluralizeLower(entity: string): string {
   if (lower.endsWith('s')) return lower + 'es';
   if (lower.endsWith('y')) return lower.slice(0, -1) + 'ies';
   return lower + 's';
+}
+
+/**
+ * Normalize host-format ({α, target, fields}) и runtime-native ({alpha, entity, value})
+ * в общий shape. См. `src/routes/agent.ts::normalizeEffectTemplate` — там source of truth.
+ */
+function normalizeEffectTemplate(tpl: any): {
+  entity: string;
+  alpha: string;
+  value: Record<string, any>;
+} {
+  const rawAlpha = tpl.alpha ?? tpl.α ?? 'create';
+  const alpha = rawAlpha === 'add' ? 'create' : rawAlpha;
+  const target = tpl.target ?? tpl.entity ?? '';
+  const entity = String(target).split('.')[0];
+  const value = tpl.value ?? tpl.fields ?? {};
+  return { entity, alpha, value };
 }
 
 function substitute(obj: any, ctx: { params: any; viewer: any }): any {

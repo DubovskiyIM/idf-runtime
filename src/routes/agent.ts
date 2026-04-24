@@ -167,11 +167,39 @@ function buildEffectsFromParticles(
   viewer: any,
 ): Array<{ entity: string; alpha: string; value: Record<string, any> }> {
   const templates = intent.particles?.effects ?? [];
-  return templates.map((tpl: any) => ({
-    entity: tpl.entity,
-    alpha: tpl.alpha,
-    value: substitute(tpl.value, { params, viewer }),
-  }));
+  return templates.map((tpl: any) => {
+    const norm = normalizeEffectTemplate(tpl);
+    return {
+      entity: norm.entity,
+      alpha: norm.alpha,
+      value: substitute(norm.value, { params, viewer }),
+    };
+  });
+}
+
+/**
+ * Host-format particles (как в sales-crm.json template):
+ *   `{ α: "create", target: "Lead", fields: { status: "new" } }`
+ *   `{ α: "replace", target: "Lead.status", fields: { status: "qualified" } }`
+ *
+ * Runtime-native format:
+ *   `{ alpha: "create", entity: "Lead", value: { status: "new" } }`
+ *
+ * Нормализуем оба в runtime shape. Target может быть "Entity" или "Entity.field" —
+ * берём часть до точки как entity (field-level target описывает column для replace,
+ * но в store писать полный fields-patch).
+ */
+function normalizeEffectTemplate(tpl: any): {
+  entity: string;
+  alpha: string;
+  value: Record<string, any>;
+} {
+  const rawAlpha = tpl.alpha ?? tpl.α ?? 'create';
+  const alpha = rawAlpha === 'add' ? 'create' : rawAlpha;
+  const target = tpl.target ?? tpl.entity ?? '';
+  const entity = String(target).split('.')[0];
+  const value = tpl.value ?? tpl.fields ?? {};
+  return { entity, alpha, value };
 }
 
 function substitute(obj: any, ctx: { params: any; viewer: any }): any {
