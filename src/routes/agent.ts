@@ -46,12 +46,14 @@ export function createAgentRouter(deps: AgentDeps): Router {
 
   router.post('/api/agent/:slug/exec', (req: any, res) => {
     if (!req.viewer) return res.status(401).json({ error: 'no_viewer' });
+    // Middleware ставит viewer.userId, SDK ожидает viewer.id — нормализуем здесь.
+    const viewer = { ...req.viewer, id: req.viewer.id ?? req.viewer.userId };
 
     const { intentId, params } = req.body ?? {};
     if (!intentId) return res.status(400).json({ ok: false, reason: 'intentId_required' });
 
     const domain = deps.getDomain();
-    const role = domain?.roles?.[req.viewer.role];
+    const role = domain?.roles?.[viewer.role];
     if (!role?.canExecute?.includes(intentId)) {
       return res.status(405).json({ ok: false, reason: 'intent_not_permitted' });
     }
@@ -63,10 +65,10 @@ export function createAgentRouter(deps: AgentDeps): Router {
     const pa = checkPreapprovalForIntent(
       intentId,
       paramsObj,
-      req.viewer,
+      viewer,
       domain,
-      toSdkWorld(deps.getWorld(req.viewer)),
-      req.viewer.role,
+      toSdkWorld(deps.getWorld(viewer)),
+      viewer.role,
     );
     if (!pa.ok) {
       return res.status(403).json({
@@ -77,7 +79,7 @@ export function createAgentRouter(deps: AgentDeps): Router {
       });
     }
 
-    const candidateEffects = buildEffectsFromParticles(intent, paramsObj, req.viewer);
+    const candidateEffects = buildEffectsFromParticles(intent, paramsObj, viewer);
     if (candidateEffects.length === 0) {
       return res.status(400).json({ ok: false, reason: 'no_effects_from_intent' });
     }
@@ -91,7 +93,7 @@ export function createAgentRouter(deps: AgentDeps): Router {
         candidate.value.id = `eff-${randomUUID().slice(0, 8)}`;
       }
 
-      const iv = checkInvariantsForEffect(candidate, domain, toSdkWorld(deps.getWorld(req.viewer)));
+      const iv = checkInvariantsForEffect(candidate, domain, toSdkWorld(deps.getWorld(viewer)));
       if (!iv.ok) {
         for (const a of accepted) appendRollback(store, a.entity, a.id);
         return res.status(409).json({
@@ -102,18 +104,18 @@ export function createAgentRouter(deps: AgentDeps): Router {
         });
       }
 
-      store.append(toStoreEffect(candidate, req.viewer.id));
+      store.append(toStoreEffect(candidate, viewer.id));
       accepted.push({ entity: candidate.entity, id: candidate.value.id });
 
-      const worldAfter = toSdkWorld(deps.getWorld(req.viewer));
+      const worldAfter = toSdkWorld(deps.getWorld(viewer));
       const ruleDerived = evaluateRules(domain.rules ?? [], worldAfter, candidate);
       for (const d of ruleDerived) {
         if (!d.value.id || d.value.id === '{{auto}}') {
           d.value.id = `eff-${randomUUID().slice(0, 8)}`;
         }
-        const dIv = checkInvariantsForEffect(d, domain, toSdkWorld(deps.getWorld(req.viewer)));
+        const dIv = checkInvariantsForEffect(d, domain, toSdkWorld(deps.getWorld(viewer)));
         if (!dIv.ok) continue;
-        store.append(toStoreEffect(d, req.viewer.id));
+        store.append(toStoreEffect(d, viewer.id));
         derived.push({ entity: d.entity, id: d.value.id });
       }
     }
