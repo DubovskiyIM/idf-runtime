@@ -29,6 +29,8 @@ export function createConsoleTurnHandler(deps: OrchestratorDeps) {
     if (!req.viewer) {
       return res.status(401).json({ error: 'no_viewer' });
     }
+    // Нормализуем viewer: middleware ставит userId, SDK ожидает id
+    const viewer = { ...req.viewer, id: req.viewer.id ?? req.viewer.userId };
     const task = req.body?.task;
     if (!task) {
       return res.status(400).json({ error: 'task_required' });
@@ -48,15 +50,15 @@ export function createConsoleTurnHandler(deps: OrchestratorDeps) {
     };
 
     const domain = deps.getDomain();
-    const worldForPrompt = deps.getWorld(req.viewer);
-    const systemPrompt = buildSystemPrompt(domain, worldForPrompt, req.viewer.role);
+    const worldForPrompt = deps.getWorld(viewer);
+    const systemPrompt = buildSystemPrompt(domain, worldForPrompt, viewer.role);
 
     deps.onAgentTurnStart?.();
 
     const tools: ToolHandlers = {
-      exec_intent: async (input: any) => execInline(input, req.viewer, deps),
+      exec_intent: async (input: any) => execInline(input, viewer, deps),
       observe_world: async (input: any) => {
-        const w = deps.getWorld(req.viewer);
+        const w = deps.getWorld(viewer);
         if (input?.entity) {
           const key = pluralizeLower(input.entity);
           return { [input.entity]: (w[key] ?? []).slice(0, 20) };
