@@ -154,11 +154,16 @@ function toSdkWorld(runtimeWorld: any): any {
   return out;
 }
 
+/**
+ * SDK preapproval/invariants ищут коллекции по camelCase plural:
+ * AgentPreapproval → agentPreapprovals (не agentpreapprovals).
+ * Воспроизводит camelPluralize из SDK findCollectionRows.
+ */
 function pluralizeLower(entity: string): string {
-  const lower = entity.toLowerCase();
-  if (lower.endsWith('s')) return lower + 'es';
-  if (lower.endsWith('y')) return lower.slice(0, -1) + 'ies';
-  return lower + 's';
+  const camel = entity[0].toLowerCase() + entity.slice(1);
+  if (camel.endsWith('y')) return camel.slice(0, -1) + 'ies';
+  if (camel.endsWith('s')) return camel + 'es';
+  return camel + 's';
 }
 
 function buildEffectsFromParticles(
