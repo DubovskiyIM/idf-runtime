@@ -60,13 +60,12 @@ export function createAgentRouter(deps: AgentDeps): Router {
 
     const paramsObj = params ?? {};
 
-    const sdkWorld = toSdkWorld(deps.getWorld(req.viewer));
     const pa = checkPreapprovalForIntent(
       intentId,
       paramsObj,
       req.viewer,
       domain,
-      sdkWorld,
+      toSdkWorld(deps.getWorld(req.viewer)),
       req.viewer.role,
     );
     if (!pa.ok) {
@@ -92,8 +91,7 @@ export function createAgentRouter(deps: AgentDeps): Router {
         candidate.value.id = `eff-${randomUUID().slice(0, 8)}`;
       }
 
-      const ivWorld = toSdkWorld(deps.getWorld(req.viewer));
-      const iv = checkInvariantsForEffect(candidate, domain, ivWorld);
+      const iv = checkInvariantsForEffect(candidate, domain, toSdkWorld(deps.getWorld(req.viewer)));
       if (!iv.ok) {
         for (const a of accepted) appendRollback(store, a.entity, a.id);
         return res.status(409).json({
@@ -141,15 +139,23 @@ export function createAgentRouter(deps: AgentDeps): Router {
 }
 
 /**
- * Runtime getWorld возвращает PascalCase dict `{Entity: {id: row}}`.
- * SDK preapproval/invariants ожидают camelCase plural collection `{entities: [rows]}`.
+ * Нормализует world в SDK-формат `{camelPluralEntity: [rows]}`.
+ *
+ * Поддерживает два входных формата:
+ * - Старый (тесты/legacy): `{Entity: {id: row}}` → конвертируем ключ + Object.values
+ * - Новый (VPS runtime после PR #31): `{camelPluralEntity: [rows]}` → уже в нужном виде
+ *
+ * Определяем по типу значения: Array → уже новый формат (ключ оставляем).
  */
 function toSdkWorld(runtimeWorld: any): any {
   const out: Record<string, any[]> = {};
   for (const [entity, rowsDict] of Object.entries(runtimeWorld ?? {})) {
     if (!rowsDict || typeof rowsDict !== 'object') continue;
-    const rows = Array.isArray(rowsDict) ? rowsDict : Object.values(rowsDict);
-    out[pluralizeLower(entity)] = rows as any[];
+    if (Array.isArray(rowsDict)) {
+      out[entity] = rowsDict;
+    } else {
+      out[pluralizeLower(entity)] = Object.values(rowsDict) as any[];
+    }
   }
   return out;
 }

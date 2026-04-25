@@ -48,7 +48,7 @@ export function createConsoleTurnHandler(deps: OrchestratorDeps) {
     };
 
     const domain = deps.getDomain();
-    const worldForPrompt = toSdkWorld(deps.getWorld(req.viewer));
+    const worldForPrompt = deps.getWorld(req.viewer);
     const systemPrompt = buildSystemPrompt(domain, worldForPrompt, req.viewer.role);
 
     deps.onAgentTurnStart?.();
@@ -56,7 +56,7 @@ export function createConsoleTurnHandler(deps: OrchestratorDeps) {
     const tools: ToolHandlers = {
       exec_intent: async (input: any) => execInline(input, req.viewer, deps),
       observe_world: async (input: any) => {
-        const w = toSdkWorld(deps.getWorld(req.viewer));
+        const w = deps.getWorld(req.viewer);
         if (input?.entity) {
           const key = pluralizeLower(input.entity);
           return { [input.entity]: (w[key] ?? []).slice(0, 20) };
@@ -115,7 +115,7 @@ function execInline(
       if (!intent) return resolve({ ok: false, reason: 'intent_not_found' });
 
       const paramsObj = params ?? {};
-      const sdkWorld = toSdkWorld(deps.getWorld(viewer));
+      const sdkWorld = deps.getWorld(viewer);
       const pa = checkPreapprovalForIntent(
         intentId,
         paramsObj,
@@ -167,7 +167,7 @@ function execInline(
 
         const ruleDerived = evaluateRules(
           domain.rules ?? [],
-          toSdkWorld(deps.getWorld(viewer)),
+          deps.getWorld(viewer),
           c,
         );
         for (const d of ruleDerived) {
@@ -231,8 +231,11 @@ function toSdkWorld(runtimeWorld: any): Record<string, any[]> {
   const out: Record<string, any[]> = {};
   for (const [entity, rowsDict] of Object.entries(runtimeWorld ?? {})) {
     if (!rowsDict || typeof rowsDict !== 'object') continue;
-    const rows = Array.isArray(rowsDict) ? rowsDict : Object.values(rowsDict);
-    out[pluralizeLower(entity)] = rows as any[];
+    if (Array.isArray(rowsDict)) {
+      out[entity] = rowsDict;
+    } else {
+      out[pluralizeLower(entity)] = Object.values(rowsDict) as any[];
+    }
   }
   return out;
 }
