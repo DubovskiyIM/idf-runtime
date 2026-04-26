@@ -20,6 +20,11 @@ const schema = z.object({
 
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.string().default('info'),
+
+  // Demo-runner для PM-call: deterministic pattern-matcher вместо real
+  // Claude tool-use loop. Real preapproval/invariants/rules layer'ы остаются.
+  // Включается только для demo-tenant'ов (см. src/agent/demo-runner.ts).
+  DEMO_AGENT_RUNNER: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof schema>;

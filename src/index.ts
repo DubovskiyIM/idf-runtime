@@ -25,6 +25,7 @@ import { startBackupCron } from './cron/s3-backup.js';
 import { createVoiceRouter } from './routes/voice.js';
 import { createDocumentRouter } from './routes/document.js';
 import { createAgentRouter } from './routes/agent.js';
+import { demoRunToolUseLoop } from './agent/demo-runner.js';
 import { createEffectsRouter } from './routes/effects.js';
 import { createViewerInfoRouter } from './routes/viewer-info.js';
 import { createTenantIndexRouter } from './routes/tenant-index.js';
@@ -181,6 +182,11 @@ withViewer.use(
     getStore: () => store,
     onAgentTurnStart: () => signalFeeder?.stop(),
     onAgentTurnEnd: () => signalFeeder?.start(),
+    // DEMO_AGENT_RUNNER=true → deterministic pattern-matcher вместо real
+    // Claude tool-use loop (см. demo-runner.ts). Real preapproval / invariants
+    // / rules layer'ы остаются. Используется для PM-демо до момента когда
+    // MCP-server / Anthropic Messages API path реализован.
+    runToolUseLoop: env.DEMO_AGENT_RUNNER ? demoRunToolUseLoop : undefined,
   }),
 );
 withViewer.use(
