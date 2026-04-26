@@ -755,7 +755,38 @@ export function TenantApp() {
       if (a.archetype === 'detail' && !a.singleton) return true;
       return false;
     };
-    const rootIds = Object.keys(artifactsMap).filter((pid) => {
+
+    // Role-aware filter: проекция видна, если projection.forRoles отсутствует
+    // (видна всем) или содержит current viewer.role.
+    const isVisibleForRole = (pid: string): boolean => {
+      const proj = (merged as Record<string, any>)[pid];
+      const forRoles: unknown = proj?.forRoles;
+      if (!Array.isArray(forRoles) || forRoles.length === 0) return true;
+      return forRoles.includes(viewer.role);
+    };
+
+    // Если автор объявил domain.ROOT_PROJECTIONS — это explicit nav contract,
+    // используем его как-есть (intersected с artifactsMap + role filter).
+    // Поддерживает custom-archetype projections (e.g. agent_console), которые
+    // не появляются в derived nav через Object.keys(artifactsMap).
+    //
+    // Поддерживаются 2 формата:
+    //   - flat array: ["agent_console", "portfolio_list", ...]
+    //   - sectioned:  [{section:"...", items:["..."]}] (V2Shell-compat)
+    //
+    // Fallback на derived (текущая логика) — только если ROOT_PROJECTIONS отсутствует.
+    const rawRoot = (n as { ROOT_PROJECTIONS?: unknown }).ROOT_PROJECTIONS;
+    let authoredRootIds: string[] | null = null;
+    if (Array.isArray(rawRoot) && rawRoot.length > 0) {
+      const flatList: string[] = typeof rawRoot[0] === 'object'
+        ? (rawRoot as Array<{ items?: string[] }>).flatMap((s) => s.items ?? [])
+        : (rawRoot as string[]);
+      authoredRootIds = flatList.filter(
+        (pid) => artifactsMap[pid] && isVisibleForRole(pid)
+      );
+    }
+
+    const rootIds = authoredRootIds ?? Object.keys(artifactsMap).filter((pid) => {
       const a = artifactsMap[pid];
       if (isHiddenFromNav(a)) return false;
       if (a?.absorbedBy) {
@@ -763,7 +794,7 @@ export function TenantApp() {
         if (absorber && !isHiddenFromNav(absorber)) return false; // absorbed в visible hub
         // absorber скрыт → promote (иначе catalog вообще никак не достанешь)
       }
-      return true;
+      return isVisibleForRole(pid);
     });
 
     const entitiesCount = Object.keys(n.ONTOLOGY.entities ?? {}).length;
