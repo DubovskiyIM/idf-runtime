@@ -22,12 +22,14 @@ type FlatDomain = {
   roles?: Record<string, { base?: string; canExecute?: string[] }>;
   invariants?: unknown[];
   projections?: Record<string, unknown>;
+  ROOT_PROJECTIONS?: unknown;
 };
 
 type NestedDomain = {
   meta: { id: string; description?: string };
   INTENTS: Record<string, unknown>;
   PROJECTIONS: Record<string, unknown>;
+  ROOT_PROJECTIONS?: unknown;
   ONTOLOGY: {
     entities: Record<string, unknown>;
     roles: Record<string, unknown>;
@@ -213,6 +215,10 @@ function toNested(raw: MaybeNested): NestedDomain {
       meta: { id: raw.meta?.id ?? 'tenant', description: raw.meta?.description },
       INTENTS: raw.INTENTS ?? {},
       PROJECTIONS: raw.PROJECTIONS ?? {},
+      // Pass-through ROOT_PROJECTIONS — V2Shell-like nav contract автора.
+      // Без этого custom-archetype projections (e.g. agent_console) не
+      // попадают в derived nav через Object.keys(artifactsMap).
+      ROOT_PROJECTIONS: raw.ROOT_PROJECTIONS,
       ONTOLOGY: {
         entities: sanitizeEntities(raw.ONTOLOGY?.entities ?? {}),
         roles: raw.ONTOLOGY?.roles ?? {},
@@ -226,6 +232,7 @@ function toNested(raw: MaybeNested): NestedDomain {
     meta: { id: raw.meta?.id ?? 'tenant', description: raw.meta?.description },
     INTENTS: raw.intents ?? {},
     PROJECTIONS: raw.projections ?? {},
+    ROOT_PROJECTIONS: raw.ROOT_PROJECTIONS,
     ONTOLOGY: {
       entities: sanitizeEntities(raw.entities ?? {}),
       roles: raw.roles ?? {},
