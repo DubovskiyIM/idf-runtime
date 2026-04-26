@@ -37,9 +37,13 @@ const TICKER_TO_ASSET_ID: Record<string, { id: string; assetType: string }> = {
 };
 
 function parseTask(task: string, portfolioId: string): IntentCall | null {
-  // 1. Buy/sell: «купи 5 TSLA на 5000» или «продай 3 NVDA за 1500»
+  // 1. Buy/sell: «купи 5 TSLA на 5000» или «продай 3 NVDA за 1500».
+  // JS `\w` без `/u` не матчит кириллицу, поэтому `куп\w*` не ловит «купи» —
+  // используем `\S*` (any non-space). Для ticker'а `[A-ZА-Я]` без `/u` тоже
+  // lossy с `/i` (Cyrillic case-folding нестабилен) — расширяем класс явно
+  // на `[A-Za-zА-Яа-я]`.
   const buyMatch = task.match(
-    /(куп\w*|продай|sell|buy)\s+(\d+(?:[.,]\d+)?)\s+([A-ZА-Я]{2,6})\s+(?:на|за|for)\s+(\d+(?:[.,]\d+)?)/i,
+    /(куп\S*|продай|sell|buy)\s+(\d+(?:[.,]\d+)?)\s+([A-Za-zА-Яа-я]{2,6})\s+(?:на|за|for)\s+(\d+(?:[.,]\d+)?)/i,
   );
   if (buyMatch) {
     const direction = /прод|sell/i.test(buyMatch[1]) ? 'sell' : 'buy';
@@ -65,7 +69,8 @@ function parseTask(task: string, portfolioId: string): IntentCall | null {
   }
 
   // 2. Recompute risk score: «пересчитай риск», «risk score»
-  if (/пересчита\w*\s+риск|recompute.*risk|риск.*score/i.test(task)) {
+  // (\S* вместо \w* — см. comment выше про cyrillic word-class)
+  if (/пересчита\S*\s+риск|recompute.*risk|риск.*score/i.test(task)) {
     const score = 35 + Math.floor(Math.random() * 40); // 35-75
     return {
       intentId: 'agent_recompute_risk_score',
