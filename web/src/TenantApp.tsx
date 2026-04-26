@@ -11,6 +11,10 @@ import { AntdAdapterProvider } from '@intent-driven/adapter-antd';
 import '@intent-driven/adapter-antd/styles.css';
 import 'antd/dist/reset.css';
 import { buildEffectsFromIntent } from './buildEffects';
+import {
+  AgentConsoleExtension,
+  EXTENSION_ID as AGENT_CONSOLE_EXTENSION_ID,
+} from './extensions/agent-console-demo';
 
 // AntD — более стабильный peer-граф (react>=18, antd>=5); host idf использует
 // mantine+react19, runtime остаётся на react18 — поэтому antd.
@@ -1134,21 +1138,37 @@ export function TenantApp() {
                   </button>
                 )}
                 {activeArtifact ? (
-                  <RendererBoundary pid={activeProjectionId ?? 'unknown'}>
-                    <ProjectionRendererV2
-                      artifact={activeArtifact}
-                      projection={activeProjection}
-                      artifacts={artifacts}
-                      allProjections={mergedProjections}
-                      world={world}
-                      viewer={effectiveViewer}
-                      viewerContext={{ userId: viewer.id, userName: viewer.name }}
-                      exec={exec}
-                      routeParams={routeParams}
-                      navigate={navigate}
-                      back={back}
+                  (activeProjection as { extension?: string } | null)?.extension ===
+                  AGENT_CONSOLE_EXTENSION_ID ? (
+                    // Host-extension dispatch: проекция помечена marker'ом
+                    // `extension: "agent-console-demo"` — рендерим chat-стиль
+                    // обёртку над /api/agent/:slug/console/turn вместо штатного
+                    // ProjectionRendererV2. Archetype остаётся canvas (placeholder
+                    // — extension UI его всё равно подменит). См. backlog
+                    // format-rule-archetype-closed-enum.
+                    <AgentConsoleExtension
+                      projection={
+                        activeProjection as { id?: string; title?: string } | null
+                      }
+                      onEffectApplied={refreshEffects}
                     />
-                  </RendererBoundary>
+                  ) : (
+                    <RendererBoundary pid={activeProjectionId ?? 'unknown'}>
+                      <ProjectionRendererV2
+                        artifact={activeArtifact}
+                        projection={activeProjection}
+                        artifacts={artifacts}
+                        allProjections={mergedProjections}
+                        world={world}
+                        viewer={effectiveViewer}
+                        viewerContext={{ userId: viewer.id, userName: viewer.name }}
+                        exec={exec}
+                        routeParams={routeParams}
+                        navigate={navigate}
+                        back={back}
+                      />
+                    </RendererBoundary>
+                  )
                 ) : (
                   <div style={{ color: '#6b7280' }}>Выберите раздел слева</div>
                 )}
