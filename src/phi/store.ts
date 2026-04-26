@@ -36,18 +36,49 @@ export type PhiStore = {
   seedBatch(
     effects: Array<Effect & { id: string; confirmedAt?: string }>,
   ): { inserted: number };
+  /**
+   * Подменить underlying DB handle. Используется restore endpoint'ом после
+   * того как `phi.db` был копирован поверх active-файла: prepared statements
+   * привязаны к старому handle и валятся («The database connection is busy»),
+   * поэтому пересоздаём их на новом handle. Закрывает старый handle сам:
+   * иначе SQLite-WAL остаётся mapped на старый файл и `disk I/O short read`
+   * после copyFileSync поверх. Caller передаёт уже открытый new handle.
+   */
+  reload(newDb: Database.Database): void;
+  /**
+   * Закрыть текущий handle. Используется restore endpoint'ом ДО `copyFileSync`
+   * чтобы release'нуть WAL/SHM перед подменой файла. После closeCurrent()
+   * store нельзя использовать пока не вызвали reload().
+   */
+  closeCurrent(): void;
 };
 
-export function createPhiStore(db: Database.Database): PhiStore {
-  const insertEffect = db.prepare(
-    `INSERT INTO phi_effects(id, alpha, entity, fields_json, context_json, confirmed_at)
-     VALUES(@id, @alpha, @entity, @fields_json, @context_json, @confirmed_at)`
-  );
-  const insertRejected = db.prepare(
-    `INSERT INTO phi_rejected(id, alpha, entity, fields_json, context_json, reason, details, rejected_at)
-     VALUES(@id, @alpha, @entity, @fields_json, @context_json, @reason, @details, @rejected_at)`
-  );
-  const countStmt = db.prepare('SELECT COUNT(*) as c FROM phi_effects');
+type Stmts = {
+  insertEffect: Database.Statement;
+  insertRejected: Database.Statement;
+  countStmt: Database.Statement;
+};
+
+function createStmts(db: Database.Database): Stmts {
+  return {
+    insertEffect: db.prepare(
+      `INSERT INTO phi_effects(id, alpha, entity, fields_json, context_json, confirmed_at)
+       VALUES(@id, @alpha, @entity, @fields_json, @context_json, @confirmed_at)`,
+    ),
+    insertRejected: db.prepare(
+      `INSERT INTO phi_rejected(id, alpha, entity, fields_json, context_json, reason, details, rejected_at)
+       VALUES(@id, @alpha, @entity, @fields_json, @context_json, @reason, @details, @rejected_at)`,
+    ),
+    countStmt: db.prepare('SELECT COUNT(*) as c FROM phi_effects'),
+  };
+}
+
+export function createPhiStore(initialDb: Database.Database): PhiStore {
+  // Mutable handle + prepared statements: reload() пересоздаёт оба под новый
+  // SQLite-файл (restore сценарий). Все методы читают current `db`/`stmts`,
+  // а не captured-at-construction-time references.
+  let db = initialDb;
+  let stmts = createStmts(db);
 
   const rowToEffect = (r: any): ConfirmedEffect => ({
     id: r.id,
@@ -62,7 +93,7 @@ export function createPhiStore(db: Database.Database): PhiStore {
     append(e) {
       const id = randomUUID();
       const confirmedAt = new Date();
-      insertEffect.run({
+      stmts.insertEffect.run({
         id,
         alpha: e.alpha,
         entity: e.entity,
@@ -75,7 +106,7 @@ export function createPhiStore(db: Database.Database): PhiStore {
     appendRejected(e) {
       const id = randomUUID();
       const rejectedAt = new Date();
-      insertRejected.run({
+      stmts.insertRejected.run({
         id,
         alpha: e.alpha,
         entity: e.entity,
@@ -119,7 +150,7 @@ export function createPhiStore(db: Database.Database): PhiStore {
       }));
     },
     count() {
-      return (countStmt.get() as any).c;
+      return (stmts.countStmt.get() as any).c;
     },
     seedBatch(effects) {
       // INSERT OR IGNORE — id-conflict silently skip'ает. Transaction для
@@ -145,6 +176,21 @@ export function createPhiStore(db: Database.Database): PhiStore {
       });
       const inserted = txn(effects);
       return { inserted };
+    },
+    reload(newDb) {
+      // Закрываем старый handle если ещё открыт (idempotent: closeCurrent
+      // мог быть вызван заранее в restore-flow). better-sqlite3 .open === false
+      // если уже закрыт — повторный close выбросит, поэтому проверяем.
+      if (db.open) {
+        try { db.close(); } catch { /* ignore */ }
+      }
+      db = newDb;
+      stmts = createStmts(db);
+    },
+    closeCurrent() {
+      if (db.open) {
+        try { db.close(); } catch { /* ignore */ }
+      }
     },
   };
 }

@@ -54,7 +54,11 @@ export function createEffectsRouter(deps: EffectsDeps): Router {
 
       const effect = {
         ...parsed.data,
-        context: { ...(parsed.data.context ?? {}), actor: viewer.userId },
+        context: {
+          ...(parsed.data.context ?? {}),
+          actor: viewer.userId,
+          viewerRole: viewer.role,
+        },
       } as any;
 
       const v = deps.validate(effect, deps.getDomain(), viewer);
