@@ -788,12 +788,21 @@ export function TenantApp() {
       const flatList: string[] = typeof rawRoot[0] === 'object'
         ? (rawRoot as Array<{ items?: string[] }>).flatMap((s) => s.items ?? [])
         : (rawRoot as string[]);
+      // Используем mergedProjections (а не artifactsMap) — custom-archetype
+      // projections (agent_console и др.) могут отсутствовать в artifactsMap,
+      // если crystallize не синтезирует artifact для unknown archetype, но
+      // они присутствуют в mergedProjections и должны попасть в nav.
       authoredRootIds = flatList.filter(
-        (pid) => artifactsMap[pid] && isVisibleForRole(pid)
+        (pid) => merged[pid] && isVisibleForRole(pid)
       );
     }
 
-    const rootIds = authoredRootIds ?? Object.keys(artifactsMap).filter((pid) => {
+    // ВАЖНО: проверяем length > 0 явно. `[] ?? fallback` returns []`, не
+    // fallback — это создавало ложный empty-state когда ROOT_PROJECTIONS
+    // объявлен но все items отфильтрованы.
+    const rootIds = authoredRootIds && authoredRootIds.length > 0
+      ? authoredRootIds
+      : Object.keys(artifactsMap).filter((pid) => {
       const a = artifactsMap[pid];
       if (isHiddenFromNav(a)) return false;
       if (a?.absorbedBy) {
