@@ -17,6 +17,7 @@ import { createReloadRouter } from './admin/reload.js';
 import { createAuditRouter } from './admin/audit.js';
 import { createAdminHealthRouter } from './admin/health.js';
 import { createSnapshotRouter } from './admin/snapshot.js';
+import { createRestoreRouter } from './admin/restore.js';
 import { createSeedRouter } from './admin/seed.js';
 import { createAdminSignalsRouter } from './admin/signals.js';
 import { SignalFeeder } from './ml/signalFeeder.js';
@@ -142,6 +143,13 @@ app.use(
     client: s3,
     bucket: env.S3_BUCKET,
     tenantSlug: env.TENANT_SLUG,
+    store,
+  })
+);
+app.use(
+  createRestoreRouter({
+    secret: env.TENANT_HMAC_SECRET,
+    dataDir: env.DATA_DIR,
     store,
   })
 );
