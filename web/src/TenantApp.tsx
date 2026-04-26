@@ -1075,12 +1075,16 @@ export function TenantApp() {
                   const proj = mergedProjections[pid];
                   const art = artifacts[pid];
                   const isActive = pid === activeProjectionId;
-                  // Приоритет: authored name → artifact title → mainEntity
-                  // (CapitalCase) → humanized pid. До fix'а humanizeId давал
-                  // lowercase «book» для book_list и book_detail одновременно
-                  // — дубли в sidebar было не отличить.
+                  // Приоритет: authored name → authored title → artifact title
+                  // → mainEntity → humanized pid. Authored `proj.title` (поле,
+                  // которое реально кладут в ontology — `projection.title: "Agent"`)
+                  // должно быть впереди `mainEntity`: иначе несколько projection'ов
+                  // на одной mainEntity дают одинаковый label в sidebar'е (три
+                  // «Portfolio» вместо «Agent» / «Портфели» / «Активы»).
+                  const projAny = proj as { name?: string; title?: string } | undefined;
                   const label =
-                    proj?.name ??
+                    projAny?.name ??
+                    projAny?.title ??
                     art?.title ??
                     (art?.mainEntity as string | undefined) ??
                     humanizeId(pid);
