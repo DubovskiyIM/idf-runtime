@@ -40,22 +40,36 @@ export async function runToolUseLoop(opts: RunOpts): Promise<void> {
   const binary = opts.claudeBinary ?? 'claude';
   const model = opts.model ?? 'sonnet';
 
-  const child: any = spawn(binary, [
-    '--print',
-    '--verbose',
-    '--output-format',
-    'stream-json',
-    '--input-format',
-    'text',
-    '--model',
-    model,
-    '--append-system-prompt',
-    opts.systemPrompt,
-    '--permission-mode',
-    'bypassPermissions',
-    '--disallowed-tools',
-    '*',
-  ]);
+  // --permission-mode bypassPermissions НЕ используем: под root claude CLI
+  // отказывает («--dangerously-skip-permissions cannot be used with root/sudo
+  // privileges»). С --disallowed-tools '*' все tools заблокированы — permission
+  // prompts невозможны в принципе, поэтому bypass избыточен. Identical с
+  // studio/server/sessions/claude-cli.ts (M1.2 path).
+  const child: any = spawn(
+    binary,
+    [
+      '--print',
+      '--verbose',
+      '--output-format',
+      'stream-json',
+      '--input-format',
+      'text',
+      '--model',
+      model,
+      '--append-system-prompt',
+      opts.systemPrompt,
+      '--disallowed-tools',
+      '*',
+    ],
+    {
+      env: {
+        ...process.env,
+        // IS_SANDBOX=1 — claude CLI знает что мы в изолированном окружении
+        // (Docker container с disallowed-tools), permission-flow упрощается.
+        IS_SANDBOX: '1',
+      },
+    },
+  );
 
   child.stdin?.write(opts.task);
   child.stdin?.end?.();

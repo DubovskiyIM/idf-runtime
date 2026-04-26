@@ -83,6 +83,11 @@ services:
       REVOCATION_POLL_SECONDS: "60"
     volumes:
       - ./data:/data
+      # Claude CLI subprocess для /api/agent/:slug/console/turn (agent
+      # tool-use loop). OAuth state монтируется read-only из VPS host'а.
+      # См. ops/setup-claude.md для одноразового login flow на VPS.
+      - /root/.claude:/root/.claude:ro
+      - /root/.claude.json:/root/.claude.json:ro
     ports:
       - "127.0.0.1:4001:3001"  # per-tenant mapping: demo → 4001, next → 4002, etc.
 ```
@@ -91,6 +96,8 @@ services:
 ```
 TENANT_HMAC_SECRET=<тот же что в /opt/idf-auth/.env>
 ```
+
+**Per-tenant Claude CLI:** image содержит `@anthropic-ai/claude-code` глобально + `IS_SANDBOX=1` env при subprocess spawn'е. OAuth credentials (`~/.claude/`) shared между всеми tenant containers через read-only mount. Login на VPS host'е однократный — `claude` CLI на host'е, OAuth state кэшируется в `/root/.claude/`.
 
 ### 5. Nginx site `/etc/nginx/sites-available/demo.app.intent-design.tech`
 
